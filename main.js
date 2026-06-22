@@ -1,5 +1,6 @@
 import { createGaltonBoard } from "./src/scenes/galton/index.js";
 import { createCoinDiceScene } from "./src/scenes/coin-dice/index.js";
+import { createBingoMachineScene } from "./src/scenes/bingo-machine/index.js";
 import {
   SCALE,
   toW,
@@ -30,6 +31,19 @@ const GALTON_BIAS_P = 0.68;
 
 let lastFrameTime = 0;
 let loopRunning = false;
+
+function geometricPmf(k, p) {
+  return ((1 - p) ** k) * p;
+}
+
+function negativeBinomialPmf(k, r, p) {
+  if (k < 0) return 0;
+  let coeff = 1;
+  for (let i = 1; i <= k; i += 1) {
+    coeff *= (r + i - 1) / i;
+  }
+  return coeff * (p ** r) * ((1 - p) ** k);
+}
 
 const distributionSpecs = {
   normal: {
@@ -62,11 +76,11 @@ const distributionSpecs = {
   },
   binom: {
     id: "binom",
-    title: "二項分布",
-    tag: "biased branching",
+    title: "偏り分岐",
+    tag: "biased galton",
     shape: "非対称",
     description:
-      "Galton と同じ舞台で、左右の偏りを変えて見せる。ボード全体に横方向の偏りを与えて実際の衝突をずらす。",
+      "three.js の 3D 空間で偏ったコインを何度も投げ、成功回数を 0〜段数のビンに集計する。コインの反復投げから二項分布を作る。",
     evaluation: ["適切性: ◎", "見栄え: ○", "わかりやすさ: ◎", "物理演算: ◎"],
     defaults: { samples: 500, steps: 14 },
     controls: [
@@ -76,8 +90,9 @@ const distributionSpecs = {
     binsFor(params) {
       return params.steps + 1;
     },
-    physics: true,
-    physicsMode: "biased",
+    physics: false,
+    render3d: true,
+    threeKind: "binom",
     biasP: GALTON_BIAS_P,
     sample(params, rand) {
       return binomialSample(params.steps, GALTON_BIAS_P, rand);
@@ -90,29 +105,173 @@ const distributionSpecs = {
       return weights;
     },
   },
-  coin3d: {
-    id: "coin3d",
+  bernoulli: {
+    id: "bernoulli",
     title: "ベルヌーイ分布",
     tag: "3D coin toss",
-    shape: "0/1 の 2 値",
+    shape: "1回の表裏",
     description:
-      "three.js の 3D 空間でコインを投げ、その結果を 0/1 の 2 ビンに集計する。コイン投げの最小単位として見せる。",
+      "1回だけコインを投げ、表か裏かを 0/1 の 2 ビンに集計する。最小単位のコイン分布。",
     evaluation: ["適切性: ◎", "見栄え: ◎", "わかりやすさ: ◎", "3D 表現: ◎"],
-    defaults: { samples: 60 },
+    defaults: { samples: 80, p: 0.5 },
     controls: [
       { key: "samples", label: "投数", min: 10, max: 1000, step: 5, format: (v) => `${v}` },
+      { key: "p", label: "表の確率 p", min: 0.05, max: 0.95, step: 0.05, format: (v) => v.toFixed(2) },
     ],
     binsFor() {
       return 2;
     },
     physics: false,
     render3d: true,
-    threeKind: "coin",
+    threeKind: "bernoulli",
     sample(params, rand) {
-      return rand() < 0.5 ? 0 : 1;
+      return rand() < params.p ? 1 : 0;
     },
     theoretical(params, bins) {
-      return Array.from({ length: bins }, () => 1 / 2);
+      return [1 - params.p, params.p].slice(0, bins);
+    },
+  },
+  binom3d: {
+    id: "binom3d",
+    title: "二項分布",
+    tag: "3D coin toss",
+    shape: "n回中の成功回数",
+    description:
+      "同じコインを n 回投げ、表の回数を 0 から n のビンに集計する。固定回数の反復投げで二項分布を作る。",
+    evaluation: ["適切性: ◎", "見栄え: ◎", "わかりやすさ: ◎", "3D 表現: ◎"],
+    defaults: { samples: 500, trials: 14, p: 0.5 },
+    controls: [
+      { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
+      { key: "trials", label: "試行回数 n", min: 2, max: 20, step: 1, format: (v) => `${v}` },
+      { key: "p", label: "表の確率 p", min: 0.05, max: 0.95, step: 0.05, format: (v) => v.toFixed(2) },
+    ],
+    binsFor(params) {
+      return params.trials + 1;
+    },
+    physics: false,
+    render3d: true,
+    threeKind: "binom",
+    sample(params, rand) {
+      return binomialSample(params.trials, params.p, rand);
+    },
+    theoretical(params, bins) {
+      const weights = [];
+      for (let k = 0; k < bins; k += 1) {
+        weights.push(binomialPmf(params.trials, k, params.p));
+      }
+      return weights;
+    },
+  },
+  geometric: {
+    id: "geometric",
+    title: "幾何分布",
+    tag: "3D coin toss",
+    shape: "最初の成功まで",
+    description:
+      "表が最初に出るまでコインを投げ続け、その失敗回数を集計する。試行の長さ自体が分布になる。",
+    evaluation: ["適切性: ◎", "見栄え: ◎", "わかりやすさ: ◎", "3D 表現: ◎"],
+    defaults: { samples: 400, maxTries: 12, p: 0.5 },
+    controls: [
+      { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
+      { key: "maxTries", label: "最大試行回数", min: 3, max: 20, step: 1, format: (v) => `${v}` },
+      { key: "p", label: "表の確率 p", min: 0.05, max: 0.95, step: 0.05, format: (v) => v.toFixed(2) },
+    ],
+    binsFor(params) {
+      return params.maxTries + 1;
+    },
+    physics: false,
+    render3d: true,
+    threeKind: "geometric",
+    sample(params, rand) {
+      let failures = 0;
+      while (failures < params.maxTries) {
+        if (rand() < params.p) return failures;
+        failures += 1;
+      }
+      return params.maxTries;
+    },
+    theoretical(params, bins) {
+      const weights = [];
+      for (let k = 0; k < bins - 1; k += 1) {
+        weights.push(geometricPmf(k, params.p));
+      }
+      weights.push((1 - params.p) ** params.maxTries);
+      return weights;
+    },
+  },
+  negbinom: {
+    id: "negbinom",
+    title: "負の二項分布",
+    tag: "3D coin toss",
+    shape: "r回成功まで",
+    description:
+      "r 回表が出るまでコインを投げ、その途中で出た裏の回数を集計する。成功回数を固定した待ち時間の分布。",
+    evaluation: ["適切性: ◎", "見栄え: ◎", "わかりやすさ: ◎", "3D 表現: ◎"],
+    defaults: { samples: 400, successesNeeded: 4, maxFailures: 24, p: 0.5 },
+    controls: [
+      { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
+      { key: "successesNeeded", label: "必要な成功数 r", min: 1, max: 8, step: 1, format: (v) => `${v}` },
+      { key: "maxFailures", label: "最大失敗回数", min: 6, max: 40, step: 1, format: (v) => `${v}` },
+      { key: "p", label: "表の確率 p", min: 0.05, max: 0.95, step: 0.05, format: (v) => v.toFixed(2) },
+    ],
+    binsFor(params) {
+      return params.maxFailures + 1;
+    },
+    physics: false,
+    render3d: true,
+    threeKind: "negbinom",
+    sample(params, rand) {
+      let successes = 0;
+      let failures = 0;
+      while (failures < params.maxFailures) {
+        if (rand() < params.p) {
+          successes += 1;
+          if (successes >= params.successesNeeded) return failures;
+        } else {
+          failures += 1;
+        }
+      }
+      return params.maxFailures;
+    },
+    theoretical(params, bins) {
+      const weights = [];
+      for (let k = 0; k < bins - 1; k += 1) {
+        weights.push(negativeBinomialPmf(k, params.successesNeeded, params.p));
+      }
+      const tail = Math.max(0, 1 - weights.reduce((sum, value) => sum + value, 0));
+      weights.push(tail);
+      return weights;
+    },
+  },
+  walk: {
+    id: "walk",
+    title: "ランダムウォーク",
+    tag: "3D coin toss",
+    shape: "終点の位置",
+    description:
+      "コインの表裏を左右の一歩に変換し、固定歩数の終点を集計する。移動の積み重ねで中心付近に集まる。",
+    evaluation: ["適切性: ◎", "見栄え: ◎", "わかりやすさ: ◎", "3D 表現: ◎"],
+    defaults: { samples: 500, steps: 20, p: 0.5 },
+    controls: [
+      { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
+      { key: "steps", label: "歩数", min: 4, max: 40, step: 1, format: (v) => `${v}` },
+      { key: "p", label: "右に進む確率 p", min: 0.05, max: 0.95, step: 0.05, format: (v) => v.toFixed(2) },
+    ],
+    binsFor(params) {
+      return params.steps + 1;
+    },
+    physics: false,
+    render3d: true,
+    threeKind: "walk",
+    sample(params, rand) {
+      return binomialSample(params.steps, params.p, rand);
+    },
+    theoretical(params, bins) {
+      const weights = [];
+      for (let k = 0; k < bins; k += 1) {
+        weights.push(binomialPmf(params.steps, k, params.p));
+      }
+      return weights;
     },
   },
   dice3d: {
@@ -145,10 +304,10 @@ const distributionSpecs = {
   hypergeom: {
     id: "hypergeom",
     title: "超幾何分布",
-    tag: "without replacement",
+    tag: "bingo machine",
     shape: "減少する母集団",
     description:
-      "戻さない抽選を表す。物理箱の中の球を減らす演出で本質を見せる。",
+      "3D のビンゴマシンで玉を戻さずに抽出し、成功数を集計する。箱の中身が減っていく様子で戻さない抽選を見せる。",
     evaluation: ["適切性: ◎", "見栄え: ○", "わかりやすさ: ○", "物理演算: ○"],
     defaults: { samples: 80, population: 40, successes: 14, draws: 6 },
     controls: [
@@ -161,6 +320,8 @@ const distributionSpecs = {
       return params.draws + 1;
     },
     physics: false,
+    render3d: true,
+    threeKind: "bingo",
     sample(params, rand) {
       return hypergeometricSample(params.population, params.successes, params.draws, rand);
     },
@@ -350,19 +511,21 @@ const coinDiceScene = createCoinDiceScene({
   state,
 });
 
+const bingoMachineScene = createBingoMachineScene({
+  canvas: els.canvas3d,
+  state,
+});
+
+function getThreeScene(definition) {
+  return definition.threeKind === "bingo" ? bingoMachineScene : coinDiceScene;
+}
+
 function currentParams() {
   return state.params;
 }
 
 function sampleToBin(definition, rawValue, bins) {
-  if (
-    definition.id === "normal"
-    || definition.id === "binom"
-    || definition.id === "hypergeom"
-    || definition.id === "poisson"
-    || definition.id === "coin3d"
-    || definition.id === "dice3d"
-  ) {
+  if (definition.render3d || definition.id === "normal" || definition.id === "binom" || definition.id === "hypergeom" || definition.id === "poisson") {
     return clamp(Math.round(rawValue), 0, bins - 1);
   }
 
@@ -405,7 +568,7 @@ function setActive(id) {
   els.pause.textContent = "一時停止";
   if (definition.render3d) {
     state.physics = null;
-    coinDiceScene.reset(definition.threeKind, false);
+    getThreeScene(definition).reset(definition.threeKind || definition.id, false);
   } else if (definition.physics) {
     galtonBoard.resetPhysics();
   } else {
@@ -467,7 +630,7 @@ function renderControls() {
       };
       output.textContent = spec.format(value);
       if (state.active.render3d) {
-        coinDiceScene.reset(state.active.threeKind, false);
+        getThreeScene(state.active).reset(state.active.threeKind || state.active.id, false);
         renderDetails();
       } else if (state.active.physics) {
         galtonBoard.resetPhysics();
@@ -552,8 +715,8 @@ function frame(now) {
   const height = rect.height;
   syncCanvasVisibility();
   if (state.active.render3d) {
-    coinDiceScene.step(dt);
-    coinDiceScene.render(width, height);
+    getThreeScene(state.active).step(dt);
+    getThreeScene(state.active).render(width, height);
   } else {
     ctx.clearRect(0, 0, width, height);
     drawBackground(ctx, width, height);
@@ -607,14 +770,14 @@ setInterval(() => {
     const now = performance.now();
     const dt = lastFrameTime > 0 ? Math.min(now - lastFrameTime, 50) : 16.667;
     lastFrameTime = now;
-    coinDiceScene.step(dt);
+    getThreeScene(state.active).step(dt);
   }
 }, 20);
 
 els.reroll.addEventListener("click", () => {
   state.rngSeed = (state.rngSeed + 1) >>> 0;
   if (state.active.render3d) {
-    coinDiceScene.reset(state.active.threeKind, true);
+    getThreeScene(state.active).reset(state.active.threeKind || state.active.id, true);
   } else if (state.active.physics) {
     galtonBoard.resetPhysics(true);
   } else {
@@ -627,7 +790,7 @@ els.reroll.addEventListener("click", () => {
 els.pause.addEventListener("click", () => {
   const paused = !state.paused;
   if (state.active.render3d) {
-    coinDiceScene.setPaused(paused);
+    getThreeScene(state.active).setPaused(paused);
   } else if (state.active.physics) {
     galtonBoard.setPaused(paused);
   } else {
@@ -642,7 +805,7 @@ function bootstrap() {
   renderControls();
   syncCanvasVisibility();
   if (state.active.render3d) {
-    coinDiceScene.reset(state.active.threeKind, false);
+    getThreeScene(state.active).reset(state.active.threeKind || state.active.id, false);
   } else if (state.active.physics) {
     galtonBoard.resetPhysics();
   } else {

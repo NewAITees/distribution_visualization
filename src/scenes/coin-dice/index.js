@@ -1,5 +1,5 @@
 import { createThreeRuntime, createThreeRenderer } from "../../three/runtime.js";
-import { normalizeWeights } from "../../core/math.js";
+import { binomialPmf, normalizeWeights } from "../../core/math.js";
 
 export function createCoinDiceScene({ canvas, state }) {
   const runtime = createThreeRuntime();
@@ -39,20 +39,25 @@ export function createCoinDiceScene({ canvas, state }) {
   scene.add(fill);
 
   const tosses = [];
-  const clock = new THREE.Clock(false);
 
   const runtimeState = {
-    kind: "coin",
-    sides: 2,
+    mode: "bernoulli",
     running: false,
     paused: false,
     total: 0,
     spawned: 0,
     settled: 0,
+    completed: 0,
     spawnTimer: 0,
     spawnInterval: 140,
     complete: false,
     active: null,
+    queue: [],
+    biasP: 0.5,
+    trialSize: 1,
+    maxTries: 1,
+    maxFailures: 1,
+    successesNeeded: 1,
   };
 
   function clearTosses() {
@@ -67,8 +72,12 @@ export function createCoinDiceScene({ canvas, state }) {
   }
 
   function setKind(kind) {
-    runtimeState.kind = kind;
-    camera.position.set(0, 4.8, 13.5);
+    runtimeState.mode = kind;
+    if (kind === "walk") {
+      camera.position.set(0, 5.1, 15);
+    } else {
+      camera.position.set(0, 4.8, 13.5);
+    }
     camera.lookAt(0, 0, 0);
   }
 
@@ -114,31 +123,119 @@ export function createCoinDiceScene({ canvas, state }) {
     }
   }
 
-  function spawnThrow() {
-    if (runtimeState.spawned >= runtimeState.total) return;
+  function createTrial(id) {
+    return {
+      id,
+      tosses: 0,
+      successes: 0,
+      active: false,
+      finished: false,
+      result: null,
+    };
+  }
 
-    const kind = runtimeState.kind;
-    const sides = kind === "coin" ? 2 : runtimeState.sides;
-    const mesh = kind === "coin" ? buildCoinMesh() : buildDiceMesh(sides);
+  function trialLimit() {
+    switch (runtimeState.mode) {
+      case "bernoulli":
+        return 1;
+      case "binom":
+      case "walk":
+        return runtimeState.trialSize;
+      case "geometric":
+        return runtimeState.maxTries;
+      case "negbinom":
+        return runtimeState.maxFailures;
+      default:
+        return 1;
+    }
+  }
+
+  function collectTrialResult(trial, tossResult) {
+    switch (runtimeState.mode) {
+      case "bernoulli":
+        trial.result = tossResult;
+        trial.finished = true;
+        return true;
+      case "binom":
+        trial.tosses += 1;
+        trial.successes += tossResult;
+        if (trial.tosses >= runtimeState.trialSize) {
+          trial.result = trial.successes;
+          trial.finished = true;
+          return true;
+        }
+        return false;
+      case "geometric":
+        trial.tosses += 1;
+        if (tossResult === 1) {
+          trial.result = trial.tosses - 1;
+          trial.finished = true;
+          return true;
+        }
+        if (trial.tosses >= runtimeState.maxTries) {
+          trial.result = runtimeState.maxTries;
+          trial.finished = true;
+          return true;
+        }
+        return false;
+      case "negbinom":
+        trial.tosses += 1;
+        if (tossResult === 1) trial.successes += 1;
+        if (trial.successes >= runtimeState.successesNeeded) {
+          trial.result = trial.tosses - trial.successes;
+          trial.finished = true;
+          return true;
+        }
+        if (trial.tosses >= runtimeState.maxFailures) {
+          trial.result = trial.tosses - trial.successes;
+          trial.finished = true;
+          return true;
+        }
+        return false;
+      case "walk":
+        trial.tosses += 1;
+        trial.successes += tossResult;
+        if (trial.tosses >= runtimeState.trialSize) {
+          trial.result = trial.successes;
+          trial.finished = true;
+          return true;
+        }
+        return false;
+      default:
+        trial.result = tossResult;
+        trial.finished = true;
+        return true;
+    }
+  }
+
+  function spawnThrow() {
+    if (!runtimeState.queue.length) return;
+    const trial = runtimeState.queue.shift();
+    if (!trial || trial.active || trial.finished) return;
+
+    const mode = runtimeState.mode;
+    const sides = mode === "dice" ? runtimeState.sides : 2;
+    const mesh = mode === "dice" ? buildDiceMesh(sides) : buildCoinMesh();
     mesh.position.set((Math.random() - 0.5) * 0.8, 5.2, (Math.random() - 0.5) * 0.8);
     mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
     boardGroup.add(mesh);
 
-    const resultIndex = kind === "coin"
-      ? (Math.random() < 0.5 ? 0 : 1)
-      : Math.floor(Math.random() * sides);
-
-    const target = kind === "coin"
-      ? { rot: new THREE.Euler(resultIndex === 0 ? 0 : Math.PI, 0, Math.random() * Math.PI * 2), label: resultIndex }
-      : { rot: dieTopRotation(resultIndex + 1, sides), label: resultIndex };
+    const tossResult = mode === "dice"
+      ? Math.floor(Math.random() * sides)
+      : (Math.random() < (runtimeState.biasP ?? 0.5) ? 1 : 0);
+    const target = mode === "dice"
+      ? { rot: dieTopRotation(tossResult + 1, sides), label: tossResult }
+      : { rot: new THREE.Euler(tossResult === 1 ? 0 : Math.PI, 0, Math.random() * Math.PI * 2), label: tossResult };
 
     const toss = {
       mesh,
-      kind,
-      resultIndex,
+      kind: mode,
+      mode,
+      resultIndex: tossResult,
+      trial,
       target,
       age: 0,
-      life: kind === "coin" ? 0.75 : 0.95,
+      life: mode === "dice" ? 0.95 : 0.68,
       velocity: new THREE.Vector3((Math.random() - 0.5) * 1.8, 0, (Math.random() - 0.5) * 1.8),
       angular: new THREE.Vector3(
         (Math.random() * 2 + 1) * (Math.random() < 0.5 ? -1 : 1),
@@ -150,7 +247,8 @@ export function createCoinDiceScene({ canvas, state }) {
 
     tosses.push(toss);
     runtimeState.active = toss;
-    runtimeState.spawned += 1;
+    trial.active = true;
+    if (trial.tosses === 0) runtimeState.spawned += 1;
   }
 
   function reset(kind, startImmediately = false) {
@@ -158,20 +256,61 @@ export function createCoinDiceScene({ canvas, state }) {
     clearTosses();
     runtimeState.running = startImmediately;
     runtimeState.paused = false;
+    runtimeState.mode = kind;
+    runtimeState.sides = runtimeState.mode === "dice" ? Math.max(6, state.params.sides || 6) : 2;
+    runtimeState.trialSize = runtimeState.mode === "binom" || runtimeState.mode === "walk"
+      ? Math.max(1, state.params.trials || state.params.steps || 1)
+      : 1;
+    runtimeState.maxTries = runtimeState.mode === "geometric" ? Math.max(1, state.params.maxTries || 1) : 1;
+    runtimeState.maxFailures = runtimeState.mode === "negbinom" ? Math.max(1, state.params.maxFailures || 1) : 1;
+    runtimeState.successesNeeded = runtimeState.mode === "negbinom" ? Math.max(1, state.params.successesNeeded || 1) : 1;
+    runtimeState.biasP = state.params.p ?? 0.5;
     runtimeState.total = state.params.samples;
-    runtimeState.sides = kind === "coin" ? 2 : Math.max(6, state.params.sides || 6);
     runtimeState.spawned = 0;
     runtimeState.settled = 0;
+    runtimeState.completed = 0;
     runtimeState.spawnTimer = 0;
-    runtimeState.spawnInterval = Math.max(20, Math.min(120, Math.round(5000 / Math.max(state.params.samples, 1))));
+    const estimatedTosses = Math.max(1, runtimeState.total * trialLimit());
+    runtimeState.spawnInterval = Math.max(16, Math.min(110, Math.round(4200 / estimatedTosses)));
     runtimeState.complete = false;
     runtimeState.active = null;
-    state.bins = Array.from({ length: runtimeState.sides }, () => 0);
-    state.samples = [];
-    state.theoretical = normalizeWeights(
-      Array.from({ length: runtimeState.sides }, () => 1),
-      state.params.samples,
+    runtimeState.queue = Array.from({ length: runtimeState.total }, (_, index) => createTrial(index));
+    state.bins = Array.from(
+      {
+        length:
+          runtimeState.mode === "bernoulli" ? 2
+          : runtimeState.mode === "binom" || runtimeState.mode === "walk" ? runtimeState.trialSize + 1
+          : runtimeState.mode === "geometric" ? runtimeState.maxTries + 1
+          : runtimeState.mode === "negbinom" ? runtimeState.maxFailures + 1
+          : runtimeState.sides,
+      },
+      () => 0,
     );
+    state.samples = [];
+    if (runtimeState.mode === "bernoulli") {
+      state.theoretical = normalizeWeights([1 - runtimeState.biasP, runtimeState.biasP], state.params.samples);
+    } else if (runtimeState.mode === "binom" || runtimeState.mode === "walk") {
+      state.theoretical = normalizeWeights(
+        Array.from({ length: runtimeState.trialSize + 1 }, (_, index) => binomialPmf(runtimeState.trialSize, index, runtimeState.biasP)),
+        state.params.samples,
+      );
+    } else if (runtimeState.mode === "geometric") {
+      const weights = [];
+      for (let k = 0; k < runtimeState.maxTries; k += 1) {
+        weights.push(((1 - runtimeState.biasP) ** k) * runtimeState.biasP);
+      }
+      weights.push((1 - runtimeState.biasP) ** runtimeState.maxTries);
+      state.theoretical = normalizeWeights(weights, state.params.samples);
+    } else if (runtimeState.mode === "negbinom") {
+      const weights = [];
+      for (let k = 0; k < runtimeState.maxFailures; k += 1) {
+        weights.push(binomialPmf(k + runtimeState.successesNeeded - 1, k, 1 - runtimeState.biasP));
+      }
+      weights.push(Math.max(0, 1 - weights.reduce((sum, value) => sum + value, 0)));
+      state.theoretical = normalizeWeights(weights, state.params.samples);
+    } else {
+      state.theoretical = normalizeWeights(Array.from({ length: runtimeState.sides }, () => 1), state.params.samples);
+    }
     state.paused = false;
     state.threeScene = runtimeState;
     if (startImmediately) spawnThrow();
@@ -187,8 +326,6 @@ export function createCoinDiceScene({ canvas, state }) {
     toss.settled = true;
     toss.mesh.rotation.copy(toss.target.rot);
     toss.mesh.position.y = -1.92;
-    state.bins[toss.resultIndex] += 1;
-    state.samples.push(toss.resultIndex);
     runtimeState.settled += 1;
     boardGroup.remove(toss.mesh);
     toss.mesh.geometry.dispose();
@@ -197,13 +334,32 @@ export function createCoinDiceScene({ canvas, state }) {
     } else if (toss.mesh.material?.dispose) {
       toss.mesh.material.dispose();
     }
+    if (runtimeState.active === toss) {
+      runtimeState.active = null;
+    }
+    const trial = toss.trial;
+    trial.active = false;
+
+    const isDone = collectTrialResult(trial, toss.resultIndex);
+    if (isDone) {
+      const bin = Math.max(0, Math.min(state.bins.length - 1, trial.result ?? 0));
+      state.bins[bin] += 1;
+      state.samples.push(trial.result ?? 0);
+      runtimeState.completed += 1;
+    } else {
+      runtimeState.queue.push(trial);
+    }
+
+    if (runtimeState.completed >= runtimeState.total && runtimeState.queue.length === 0 && tosses.every((item) => item.settled)) {
+      runtimeState.complete = true;
+    }
   }
 
   function step(dtMs) {
     if (!runtimeState.running || runtimeState.paused || runtimeState.complete) return;
 
     runtimeState.spawnTimer += dtMs;
-    while (runtimeState.spawnTimer >= runtimeState.spawnInterval && runtimeState.spawned < runtimeState.total) {
+    while (runtimeState.spawnTimer >= runtimeState.spawnInterval && runtimeState.queue.length) {
       runtimeState.spawnTimer -= runtimeState.spawnInterval;
       spawnThrow();
     }
@@ -231,11 +387,15 @@ export function createCoinDiceScene({ canvas, state }) {
       }
     });
 
-    if (runtimeState.active == null && runtimeState.spawned < runtimeState.total && runtimeState.running) {
+    for (let i = tosses.length - 1; i >= 0; i--) {
+      if (tosses[i].settled) tosses.splice(i, 1);
+    }
+
+    if (runtimeState.active == null && runtimeState.queue.length && runtimeState.running) {
       spawnThrow();
     }
 
-    if (runtimeState.spawned >= runtimeState.total && runtimeState.settled >= runtimeState.total && !runtimeState.complete) {
+    if (runtimeState.completed >= runtimeState.total && runtimeState.queue.length === 0 && tosses.every((item) => item.settled) && !runtimeState.complete) {
       runtimeState.complete = true;
     }
   }
