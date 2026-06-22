@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="3D物理演算ベースの分布可視化プロトタイプ" />
+    <title>Distribution Visualization</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="backdrop backdrop-a"></div>
+    <div class="backdrop backdrop-b"></div>
+
+    <main class="app-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">3D physical distribution explorer</p>
+          <h1>Distribution Visualization</h1>
+          <p class="lede">
+            玉・さいころ・粒子の動きから分布を読む。まずは Galton board を核に、3D の舞台で確率分布の生成過程を見せる。
+          </p>
+        </div>
+        <div class="hero-meta">
+          <div class="meta-card">
+            <span>Focus</span>
+            <strong>Galton / Binomial / Hypergeometric</strong>
+          </div>
+          <div class="meta-card">
+            <span>Mode</span>
+            <strong>3D Physics Mockup</strong>
+          </div>
+        </div>
+      </header>
+
+      <section class="workspace">
+        <aside class="panel selector-panel">
+          <div class="panel-title">
+            <h2>Distributions</h2>
+            <span>select a stage</span>
+          </div>
+          <div id="distribution-list" class="distribution-list"></div>
+        </aside>
+
+        <section class="stage-panel">
+          <div class="stage-header">
+            <div>
+              <p id="stage-tag" class="stage-tag">stage</p>
+              <h2 id="stage-title">正規分布</h2>
+            </div>
+            <div class="stage-actions">
+              <button id="reroll-button" class="button button-primary" type="button">再生成</button>
+              <button id="pause-button" class="button" type="button">一時停止</button>
+            </div>
+          </div>
+
+          <div class="canvas-shell">
+            <canvas id="scene" aria-label="distribution visualization canvas"></canvas>
+          </div>
+        </section>
+
+        <aside class="panel details-panel">
+          <div class="panel-title">
+            <h2>Notes</h2>
+            <span>why it works</span>
+          </div>
+          <div id="distribution-description" class="description"></div>
+
+          <div class="stats-grid">
+            <div class="stat-card">
+              <span>Samples</span>
+              <strong id="sample-count">0</strong>
+            </div>
+            <div class="stat-card">
+              <span>Bins</span>
+              <strong id="bin-count">0</strong>
+            </div>
+            <div class="stat-card">
+              <span>Peak bin</span>
+              <strong id="peak-bin">-</strong>
+            </div>
+            <div class="stat-card">
+              <span>Shape</span>
+              <strong id="shape-name">-</strong>
+            </div>
+          </div>
+
+          <div class="panel-title secondary">
+            <h3>Parameters</h3>
+          </div>
+          <div id="parameter-controls" class="parameter-controls"></div>
+
+          <div class="panel-title secondary">
+            <h3>Evaluation</h3>
+          </div>
+          <ul id="evaluation-list" class="evaluation-list"></ul>
+        </aside>
+      </section>
+
+      <section class="footer-panel">
+        <div class="panel-title">
+          <h2>Design notes</h2>
+          <span>MVP priorities</span>
+        </div>
+        <div class="design-strip">
+          <article>
+            <strong>1. Normal</strong>
+            <p>Galton board の中心。3D の見せ場。</p>
+          </article>
+          <article>
+            <strong>2. Binomial</strong>
+            <p>p の偏りで非対称にする。</p>
+          </article>
+          <article>
+            <strong>3. Hypergeometric</strong>
+            <p>復元なしの違いを箱で見せる。</p>
+          </article>
+          <article>
+            <strong>4. Poisson</strong>
+            <p>3D の着弾点マップへ寄せる。</p>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <script src="node_modules/planck/dist/planck.min.js"></script>
+    <script src="main.js"></script>
+  </body>
+</html>
