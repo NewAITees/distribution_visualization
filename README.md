@@ -63,3 +63,8 @@
 
 ルートの [`index.html`](/C:/analysis2/distribution_visualization/index.html) を開くと、3D 風の分布可視化プロトタイプを確認できる。
 分布切替、パラメータスライダー、再生成、理論曲線の重ね描き、planck.js による Galton board の実衝突を含む。
+
+## Galton Board 物理メモ
+
+Galton board のピン・ボール・ガードレール比率をまとめたメモは
+[`galton-board-physics-notes.md`](/C:/analysis2/distribution_visualization/galton-board-physics-notes.md) に置いてある。

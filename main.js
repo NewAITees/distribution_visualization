@@ -16,7 +16,7 @@ const distributionSpecs = {
     description:
       "Galton board の中心。左右分岐を繰り返した結果が、3D の積層としてまとまる。実際の衝突で釘を通過した結果を集計する。",
     evaluation: ["適切性: ◎", "見栄え: ◎", "わかりやすさ: ◎", "物理演算: ◎"],
-    defaults: { samples: 80, steps: 14, p: 0.5 },
+    defaults: { samples: 500, steps: 14, p: 0.5 },
     controls: [
       { key: "samples", label: "サンプル数", min: 20, max: 120, step: 5, format: (v) => `${v}` },
       { key: "steps", label: "段数", min: 8, max: 20, step: 1, format: (v) => `${v}` },
@@ -45,7 +45,7 @@ const distributionSpecs = {
     description:
       "Galton と同じ舞台で、成功確率 p をずらして見せる。ボード全体に横方向の偏りを与えて実際の衝突をずらす。",
     evaluation: ["適切性: ◎", "見栄え: ○", "わかりやすさ: ◎", "物理演算: ◎"],
-    defaults: { samples: 80, steps: 14, p: 0.68 },
+    defaults: { samples: 500, steps: 14, p: 0.68 },
     controls: [
       { key: "samples", label: "サンプル数", min: 20, max: 120, step: 5, format: (v) => `${v}` },
       { key: "steps", label: "段数", min: 8, max: 20, step: 1, format: (v) => `${v}` },
@@ -257,6 +257,30 @@ function cloneParams(params) {
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
+}
+
+function makeHexagonVertices(radius) {
+  const verts = [];
+  for (let i = 0; i < 6; i += 1) {
+    const angle = (Math.PI / 3) * i + Math.PI / 6;
+    verts.push(planck.Vec2(Math.cos(angle) * radius, Math.sin(angle) * radius));
+  }
+  return verts;
+}
+
+function makeRotatedBoxVertices(hw, hh, angle) {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  const corners = [
+    [-hw, -hh],
+    [hw, -hh],
+    [hw, hh],
+    [-hw, hh],
+  ];
+  return corners.map(([x, y]) => planck.Vec2(
+    x * cos - y * sin,
+    x * sin + y * cos,
+  ));
 }
 
 function lerp(a, b, t) {
@@ -538,9 +562,6 @@ function resizeCanvas() {
   els.canvas.width = Math.floor(rect.width * ratio);
   els.canvas.height = Math.floor(rect.height * ratio);
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-  if (state.active.physics) {
-    resetPhysics();
-  }
 }
 
 function roundRect(context, x, y, w, h, r) {
@@ -684,11 +705,25 @@ function drawPhysicsStage(width, height) {
     grad.addColorStop(1, "#6e4f16");
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.arc(x, y, r + 2, 0, Math.PI * 2);
+    for (let i = 0; i < 6; i += 1) {
+      const angle = (Math.PI / 3) * i + Math.PI / 6;
+      const px = x + Math.cos(angle) * (r + 2);
+      const py = y + Math.sin(angle) * (r + 2);
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
     ctx.fill();
     ctx.fillStyle = "rgba(255,255,255,0.55)";
     ctx.beginPath();
-    ctx.arc(x - 2, y - 2, r * 0.35, 0, Math.PI * 2);
+    for (let i = 0; i < 6; i += 1) {
+      const angle = (Math.PI / 3) * i + Math.PI / 6;
+      const px = x - 2 + Math.cos(angle) * (r * 0.35);
+      const py = y - 2 + Math.sin(angle) * (r * 0.35);
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.closePath();
     ctx.fill();
   });
   ctx.restore();
@@ -717,15 +752,28 @@ function drawPhysicsStage(width, height) {
 
   // Guard rails: single straight edge per side (no kink)
   ctx.save();
+  ctx.fillStyle = "rgba(180, 210, 255, 0.10)";
   ctx.strokeStyle = "rgba(180, 210, 255, 0.38)";
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 1.25;
+  const railHalfThickness = physics.guardRailHalfThickness || 2;
   [
     [physics.guardTopLX, physics.guardTopY, physics.guardBotLX, physics.guardBotY],
     [physics.guardTopRX, physics.guardTopY, physics.guardBotRX, physics.guardBotY],
   ].forEach(([x1, y1, x2, y2]) => {
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+    const length = Math.hypot(x2 - x1, y2 - y1);
+    const midX = (x1 + x2) / 2;
+    const midY = (y1 + y2) / 2;
+    const verts = makeRotatedBoxVertices(length / 2, railHalfThickness, angle);
     ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
+    verts.forEach((v, index) => {
+      const px = midX + v.x;
+      const py = midY + v.y;
+      if (index === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    });
+    ctx.closePath();
+    ctx.fill();
     ctx.stroke();
   });
   ctx.restore();
@@ -799,10 +847,6 @@ els.pause.addEventListener("click", () => {
   els.pause.textContent = state.paused ? "再開" : "一時停止";
 });
 
-window.addEventListener("resize", () => {
-  resizeCanvas();
-});
-
 function resetPhysics() {
   const definition = state.active;
   const params = currentParams();
@@ -822,17 +866,18 @@ function resetPhysics() {
   };
 
   const bins = definition.binsFor(params);
-  const binWidth = Math.max(30, Math.min(58, (width * 0.68) / bins));
-  // Sizes proportional to bin width — pinR=binW/8, ballR=binW/8
-  const PEG_R_PX   = Math.max(3, Math.round(binWidth / 8));
-  const BALL_R_PHY = Math.max(3, Math.round(binWidth / 8));
+  const pegPitch = 24;
+  const binWidth = pegPitch;
+  // Fixed physical scale so step count changes do not resize the board.
+  const PEG_R_PX   = Math.max(4, Math.round(binWidth * 0.34));
+  const BALL_R_PHY = Math.max(2, Math.round(binWidth * 0.14));
   const BALL_R_VIS = BALL_R_PHY;
   board.ballRadius   = BALL_R_VIS;
   board.ballPhysicsR = BALL_R_PHY;
   const boardWidth = binWidth * bins;
   const startX = board.centerX - boardWidth / 2;
-  const pegGapX = binWidth;
-  const pegGapY = Math.min(30, Math.max(24, (height * 0.56) / Math.max(params.steps - 1, 1)));
+  const pegGapX = binWidth * 1.0;
+  const pegGapY = pegGapX * (Math.sqrt(3) / 2);
   const pegBottomY = board.topY + (params.steps - 1) * pegGapY;
   board.binTopY = Math.min(height - 150, pegBottomY + 48);
   board.binBottomY = Math.min(height - 100, board.binTopY + 80);
@@ -844,6 +889,7 @@ function resetPhysics() {
 
   const pegs = [];
   const balls = [];
+  const pegHexShape = planck.Polygon(makeHexagonVertices(toW(PEG_R_PX)));
 
   function addEdge(x1, y1, x2, y2, restitution = 0.1, friction = 0.1) {
     const b = world.createBody({ type: "static" });
@@ -866,6 +912,16 @@ function resetPhysics() {
     return b;
   }
 
+  function addRotatedBox(cx, cy, hw, hh, angle, restitution = 0.1, friction = 0.1) {
+    const b = world.createBody({ type: "static", position: planck.Vec2(toW(cx), toW(cy)) });
+    b.createFixture({
+      shape: planck.Polygon(makeRotatedBoxVertices(toW(hw), toW(hh), angle)),
+      friction,
+      restitution,
+    });
+    return b;
+  }
+
   // Vertical outer safety walls
   const wallH = (board.binBottomY - board.topY) / 2;
   const wallMidY = (board.topY + board.binBottomY) / 2;
@@ -875,24 +931,33 @@ function resetPhysics() {
   // Pyramid guard rails — single straight edge per side, parallel to the
   // peg-pyramid diagonal (same slope as the pyramid boundary), offset 0.45
   // bin-widths outside. One Edge body per side = no kink = no ghost collisions.
-  const grTopY = board.topY;
+  const railLiftY = Math.max(18, Math.round(pegGapY * 0.85));
+  const grTopY = Math.max(0, board.topY - railLiftY);
   const grBotY = pegBottomY;
   const grSpanX = ((params.steps - 1) / 2) * pegGapX;
-  const railGap = PEG_R_PX + BALL_R_PHY * 2;
+  const grLiftSpanX = grSpanX * ((grBotY - grTopY) / Math.max(pegBottomY - board.topY, 1));
+  const railGap = BALL_R_PHY * 3 + PEG_R_PX * 0.25;
   const leftRail = {
     topX: board.centerX - railGap,
     topY: grTopY,
-    botX: board.centerX - grSpanX - railGap,
+    botX: board.centerX - grLiftSpanX - railGap,
     botY: grBotY,
   };
   const rightRail = {
     topX: board.centerX + railGap,
     topY: grTopY,
-    botX: board.centerX + grSpanX + railGap,
+    botX: board.centerX + grLiftSpanX + railGap,
     botY: grBotY,
   };
-  addEdge(leftRail.topX, leftRail.topY, leftRail.botX, leftRail.botY, 0.10, 0.15);
-  addEdge(rightRail.topX, rightRail.topY, rightRail.botX, rightRail.botY, 0.10, 0.15);
+  const leftRailAngle = Math.atan2(leftRail.botY - leftRail.topY, leftRail.botX - leftRail.topX);
+  const rightRailAngle = Math.atan2(rightRail.botY - rightRail.topY, rightRail.botX - rightRail.topX);
+  const railHalfThickness = Math.max(2, Math.round(BALL_R_PHY * 0.8));
+  const leftRailMidX = (leftRail.topX + leftRail.botX) / 2;
+  const leftRailMidY = (leftRail.topY + leftRail.botY) / 2;
+  const rightRailMidX = (rightRail.topX + rightRail.botX) / 2;
+  const rightRailMidY = (rightRail.topY + rightRail.botY) / 2;
+  addRotatedBox(leftRailMidX, leftRailMidY, Math.hypot(leftRail.botX - leftRail.topX, leftRail.botY - leftRail.topY) / 2, railHalfThickness, leftRailAngle, 0.10, 0.15);
+  addRotatedBox(rightRailMidX, rightRailMidY, Math.hypot(rightRail.botX - rightRail.topX, rightRail.botY - rightRail.topY) / 2, railHalfThickness, rightRailAngle, 0.10, 0.15);
 
   // Bin dividers
   for (let i = 0; i <= bins; i += 1) {
@@ -922,13 +987,14 @@ function resetPhysics() {
     for (let i = 0; i < count; i += 1) {
       const px = board.centerX - rowWidth / 2 + i * pegGapX;
       const peg = world.createBody({ type: "static", position: planck.Vec2(toW(px), toW(py)) });
+      const pegData = { type: "peg", row, col: i, hitCount: 0 };
       peg.createFixture({
-        shape: planck.Circle(toW(PEG_R_PX)),
+        shape: pegHexShape,
         friction: 0.01,
         restitution: 0.43,
-        userData: { type: "peg", row, col: i },
+        userData: pegData,
       });
-      peg.setUserData({ type: "peg", row, col: i });
+      peg.setUserData(pegData);
       peg._r_px = PEG_R_PX;
       pegs.push(peg);
     }
@@ -957,13 +1023,7 @@ function resetPhysics() {
     const pegData = (ua && ua.type === "peg") ? ua
                   : (ub && ub.type === "peg") ? ub : null;
     if (!pegData) return;
-    const ballBody = (pegData === ua ? fb : fa).getBody();
-    const bd = ballBody.getUserData();
-    if (!bd || bd.type !== "ball") return;
-    if (!bd.hitRows) {
-      bd.hitRows = new Set();
-    }
-    bd.hitRows.add(pegData.row);
+    pegData.hitCount += 1;
   });
 
   // Visual pyramid outline (drawing only — no physics bodies)
@@ -987,13 +1047,13 @@ function resetPhysics() {
     guardBotLX: leftRail.botX,
     guardBotRX: rightRail.botX,
     guardBotY: grBotY,
+    guardRailHalfThickness: railHalfThickness,
     total: params.samples,
     spawned: 0,
     settled: 0,
     spawnTimer: 0,
     spawnInterval: Math.max(90, Math.min(220, Math.round(9000 / Math.max(params.samples, 1)))),
     complete: false,
-    rowHitCounts: [],
   };
 
   state.bins = Array.from({ length: bins }, () => 0);
@@ -1010,9 +1070,9 @@ function spawnBall() {
   if (!physics || physics.spawned >= physics.total) return;
   const params = currentParams();
 
-  const drift = clamp((params.p - 0.5) * 0.22, -0.12, 0.12);
-  const jitter = (Math.random() - 0.5) * 3;
-  const x = physics.board.centerX + jitter + drift * physics.binWidth * 0.5;
+  const drift = clamp((params.p - 0.5) * 0.14, -0.08, 0.08);
+  const jitter = (Math.random() - 0.5) * 1.5;
+    const x = physics.board.centerX + jitter + drift * physics.binWidth * 0.5;
 
   const ball = physics.world.createBody({
     type: "dynamic",
@@ -1027,8 +1087,8 @@ function spawnBall() {
     friction: 0.004,
     restitution: 0.48,
   });
-  ball.setLinearVelocity(planck.Vec2((Math.random() - 0.5) * 0.035 + drift * 0.3, 0.04));
-  ball.setUserData({ type: "ball", captured: false, destroySoon: false, hitRows: new Set() });
+  ball.setLinearVelocity(planck.Vec2((Math.random() - 0.5) * 0.02 + drift * 0.18, 0.025));
+  ball.setUserData({ type: "ball", captured: false, destroySoon: false });
   ball._r_px = physics.board.ballRadius;
   physics.balls.push(ball);
   physics.spawned += 1;
@@ -1065,7 +1125,6 @@ function stepPhysics(dtMs) {
       state.bins[idx] += 1;
       state.samples.push(idx);
       physics.settled += 1;
-      physics.rowHitCounts.push(bd.hitRows ? bd.hitRows.size : 0);
     }
     if ((bd && bd.destroySoon) || py > physics.board.height + 80) {
       if (!bd || !bd.captured) {
@@ -1074,10 +1133,6 @@ function stepPhysics(dtMs) {
         state.bins[idx] += 1;
         state.samples.push(idx);
         physics.settled += 1;
-        physics.rowHitCounts.push(bd && bd.hitRows ? bd.hitRows.size : 0);
-      } else if (bd && bd.captured && !bd.resultLogged) {
-        physics.rowHitCounts.push(bd.hitRows ? bd.hitRows.size : 0);
-        bd.resultLogged = true;
       }
       physics.world.destroyBody(ball);
       return false;
@@ -1109,7 +1164,7 @@ function logSimResults() {
 
   // Peak bin
   const peak = bins.indexOf(Math.max(...bins));
-  const hitRows = physicsRowHitSummary();
+  const pegHits = physicsPegHitSummary();
 
   const result = {
     distribution: state.active.id,
@@ -1122,25 +1177,36 @@ function logSimResults() {
     df,
     expectedMean: +((bins.length - 1) / 2).toFixed(3),
     shape: bins[peak] > bins[0] && bins[peak] > bins[bins.length - 1] ? "bell" : "edge-heavy",
-    rowHits: hitRows,
+    pegHits,
   };
   console.log("[galton-sim] complete:", JSON.stringify(result));
   window.__lastSimResult = result;
 }
 
-function physicsRowHitSummary() {
+function physicsPegHitSummary() {
   const physics = state.physics;
   if (!physics) return null;
-  const hitCounts = physics.rowHitCounts || [];
-  if (!hitCounts.length) {
-    return { balls: 0, min: 0, max: 0, mean: 0 };
+  const pegs = physics.pegs || [];
+  if (!pegs.length) {
+    return { pegs: 0, totalHits: 0, min: 0, max: 0, mean: 0, items: [] };
   }
+  const items = pegs.map((peg) => {
+    const pegData = peg.getUserData() || {};
+    return {
+      row: pegData.row,
+      col: pegData.col,
+      hitCount: pegData.hitCount || 0,
+    };
+  });
+  const hitCounts = items.map((item) => item.hitCount);
   const sum = hitCounts.reduce((a, b) => a + b, 0);
   return {
-    balls: hitCounts.length,
+    pegs: items.length,
+    totalHits: sum,
     min: Math.min(...hitCounts),
     max: Math.max(...hitCounts),
     mean: +(sum / hitCounts.length).toFixed(3),
+    items,
   };
 }
 
