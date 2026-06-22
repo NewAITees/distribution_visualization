@@ -1,4 +1,6 @@
-function createGaltonBoard(deps) {
+import { createThreeRuntime } from "../../three/runtime.js";
+
+export function createGaltonBoard(deps) {
   const {
     planck,
     state,
@@ -50,8 +52,12 @@ function createGaltonBoard(deps) {
     const pegGapX = binWidth * 1.0;
     const pegGapY = pegGapX * (Math.sqrt(3) / 2);
     const pegBottomY = board.topY + (params.steps - 1) * pegGapY;
-    board.binTopY = Math.min(height - 150, pegBottomY + 48);
-    board.binBottomY = Math.min(height - 100, board.binTopY + 80);
+    const binClearanceY = Math.max(8, Math.round(pegGapY * 0.3));
+    const binWallHeight = Math.max(24, Math.round(pegGapY * 1.15));
+    const bottomReserveY = 54;
+    const maxBinTopY = Math.max(pegBottomY + 4, height - bottomReserveY - binWallHeight);
+    board.binTopY = Math.min(pegBottomY + binClearanceY, maxBinTopY);
+    board.binBottomY = Math.min(height - 16, board.binTopY + binWallHeight);
 
     const biasP = definition.biasP ?? 0.5;
     const gravX = (definition.physicsMode === "biased")
@@ -61,6 +67,7 @@ function createGaltonBoard(deps) {
 
     const pegs = [];
     const balls = [];
+    const three = createThreeRuntime();
     const pegHexShape = planck.Polygon(makeHexagonVertices(toW(PEG_R_PX)));
 
     function addEdge(x1, y1, x2, y2, restitution = 0.1, friction = 0.1) {
@@ -223,8 +230,9 @@ function createGaltonBoard(deps) {
       spawned: 0,
       settled: 0,
       spawnTimer: 0,
-      spawnInterval: Math.max(90, Math.min(220, Math.round(9000 / Math.max(params.samples, 1)))),
+      spawnInterval: Math.max(20, Math.min(160, Math.round(5000 / Math.max(params.samples, 1)))),
       complete: false,
+      three,
     };
 
     state.bins = Array.from({ length: bins }, () => 0);
@@ -272,7 +280,7 @@ function createGaltonBoard(deps) {
 
   function stepPhysics(dtMs) {
     const physics = state.physics;
-    if (!physics || state.paused || !physics.running) return;
+    if (!physics || state.paused || !physics.running || physics.complete) return;
 
     physics.spawnTimer += dtMs;
     while (physics.spawnTimer >= physics.spawnInterval && physics.spawned < physics.total) {
@@ -504,11 +512,17 @@ function createGaltonBoard(deps) {
     drawHistogramStrip(startX, board.binBottomY + 12, chartWidth, Math.max(48, height - board.binBottomY - 20));
   }
 
+  function setPaused(paused) {
+    state.paused = paused;
+    if (state.physics) {
+      state.physics.running = !paused;
+    }
+  }
+
   return {
     resetPhysics,
     stepPhysics,
     drawPhysicsStage,
+    setPaused,
   };
 }
-
-globalThis.createGaltonBoard = createGaltonBoard;

@@ -1,11 +1,35 @@
-// planck.js (Box2D-system JS implementation)
-// 1 physics meter = SCALE screen pixels
-const SCALE = 50;
-const toW = (px) => px / SCALE;  // pixels → meters
-const toS = (m) => m * SCALE;    // meters → pixels
+import { createGaltonBoard } from "./src/scenes/galton/index.js";
+import { createCoinDiceScene } from "./src/scenes/coin-dice/index.js";
+import {
+  SCALE,
+  toW,
+  toS,
+  clamp,
+  cloneParams,
+  rng,
+  binomialSample,
+  hypergeometricSample,
+  poissonSample,
+  exponentialSample,
+  gammaSample,
+  lognormalSample,
+  gaussianProfile,
+  binomialPmf,
+  hypergeometricPmf,
+  poissonPmf,
+  exponentialPdf,
+  gammaPdf,
+  lognormalPdf,
+  normalizeWeights,
+  makeHexagonVertices,
+  makeRotatedBoxVertices,
+} from "./src/core/math.js";
+import { drawBackground, roundRect, drawStaticChart, drawHistogramStrip } from "./src/core/canvas.js";
+
 const GALTON_BIAS_P = 0.68;
 
 let lastFrameTime = 0;
+let loopRunning = false;
 
 const distributionSpecs = {
   normal: {
@@ -18,7 +42,7 @@ const distributionSpecs = {
     evaluation: ["適切性: ◎", "見栄え: ◎", "わかりやすさ: ◎", "物理演算: ◎"],
     defaults: { samples: 500, steps: 14 },
     controls: [
-      { key: "samples", label: "サンプル数", min: 20, max: 120, step: 5, format: (v) => `${v}` },
+      { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
       { key: "steps", label: "段数", min: 8, max: 20, step: 1, format: (v) => `${v}` },
     ],
     binsFor(params) {
@@ -46,7 +70,7 @@ const distributionSpecs = {
     evaluation: ["適切性: ◎", "見栄え: ○", "わかりやすさ: ◎", "物理演算: ◎"],
     defaults: { samples: 500, steps: 14 },
     controls: [
-      { key: "samples", label: "サンプル数", min: 20, max: 120, step: 5, format: (v) => `${v}` },
+      { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
       { key: "steps", label: "段数", min: 8, max: 20, step: 1, format: (v) => `${v}` },
     ],
     binsFor(params) {
@@ -66,6 +90,58 @@ const distributionSpecs = {
       return weights;
     },
   },
+  coin3d: {
+    id: "coin3d",
+    title: "ベルヌーイ分布",
+    tag: "3D coin toss",
+    shape: "0/1 の 2 値",
+    description:
+      "three.js の 3D 空間でコインを投げ、その結果を 0/1 の 2 ビンに集計する。コイン投げの最小単位として見せる。",
+    evaluation: ["適切性: ◎", "見栄え: ◎", "わかりやすさ: ◎", "3D 表現: ◎"],
+    defaults: { samples: 60 },
+    controls: [
+      { key: "samples", label: "投数", min: 10, max: 1000, step: 5, format: (v) => `${v}` },
+    ],
+    binsFor() {
+      return 2;
+    },
+    physics: false,
+    render3d: true,
+    threeKind: "coin",
+    sample(params, rand) {
+      return rand() < 0.5 ? 0 : 1;
+    },
+    theoretical(params, bins) {
+      return Array.from({ length: bins }, () => 1 / 2);
+    },
+  },
+  dice3d: {
+    id: "dice3d",
+    title: "離散一様分布",
+    tag: "3D dice roll",
+    shape: "1〜6 / 1〜10",
+    description:
+      "three.js の 3D 空間でサイコロを投げ、出目を 1〜6 または 1〜10 のビンに集計する。サイコロ投げから分布を作る流れを見せる。",
+    evaluation: ["適切性: ◎", "見栄え: ◎", "わかりやすさ: ◎", "3D 表現: ◎"],
+    defaults: { samples: 60, sides: 6 },
+    controls: [
+      { key: "samples", label: "投数", min: 10, max: 1000, step: 5, format: (v) => `${v}` },
+      { key: "sides", label: "面数", min: 6, max: 10, step: 4, format: (v) => `${v}` },
+    ],
+    binsFor(params) {
+      return params.sides || 6;
+    },
+    physics: false,
+    render3d: true,
+    threeKind: "dice",
+    sample(params, rand) {
+      return Math.floor(rand() * params.sides);
+    },
+    theoretical(params, bins) {
+      const value = 1 / Math.max(bins, 1);
+      return Array.from({ length: bins }, () => value);
+    },
+  },
   hypergeom: {
     id: "hypergeom",
     title: "超幾何分布",
@@ -76,7 +152,7 @@ const distributionSpecs = {
     evaluation: ["適切性: ◎", "見栄え: ○", "わかりやすさ: ○", "物理演算: ○"],
     defaults: { samples: 80, population: 40, successes: 14, draws: 6 },
     controls: [
-      { key: "samples", label: "サンプル数", min: 20, max: 120, step: 5, format: (v) => `${v}` },
+      { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
       { key: "population", label: "母集団サイズ", min: 12, max: 80, step: 1, format: (v) => `${v}` },
       { key: "successes", label: "成功個数", min: 1, max: 40, step: 1, format: (v) => `${v}` },
       { key: "draws", label: "取り出し数", min: 1, max: 12, step: 1, format: (v) => `${v}` },
@@ -106,7 +182,7 @@ const distributionSpecs = {
     evaluation: ["適切性: ○", "見栄え: △", "わかりやすさ: △", "物理演算: ◎"],
     defaults: { samples: 80, lambda: 4.2 },
     controls: [
-      { key: "samples", label: "サンプル数", min: 20, max: 120, step: 5, format: (v) => `${v}` },
+      { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
       { key: "lambda", label: "平均発生率 λ", min: 0.5, max: 12, step: 0.1, format: (v) => v.toFixed(1) },
     ],
     binsFor(params) {
@@ -134,7 +210,7 @@ const distributionSpecs = {
     evaluation: ["適切性: ○", "見栄え: △", "わかりやすさ: △", "物理演算: ○"],
     defaults: { samples: 80, scale: 1.0 },
     controls: [
-      { key: "samples", label: "サンプル数", min: 20, max: 120, step: 5, format: (v) => `${v}` },
+      { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
       { key: "scale", label: "スケール", min: 0.3, max: 2.2, step: 0.1, format: (v) => v.toFixed(1) },
     ],
     binsFor() {
@@ -164,7 +240,7 @@ const distributionSpecs = {
     evaluation: ["適切性: ○", "見栄え: △", "わかりやすさ: △", "物理演算: ○"],
     defaults: { samples: 80, shape: 3, scale: 1.0 },
     controls: [
-      { key: "samples", label: "サンプル数", min: 20, max: 120, step: 5, format: (v) => `${v}` },
+      { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
       { key: "shape", label: "形状 k", min: 1, max: 8, step: 1, format: (v) => `${v}` },
       { key: "scale", label: "スケール", min: 0.3, max: 2.2, step: 0.1, format: (v) => v.toFixed(1) },
     ],
@@ -195,7 +271,7 @@ const distributionSpecs = {
     evaluation: ["適切性: ○", "見栄え: ○", "わかりやすさ: △", "物理演算: ○"],
     defaults: { samples: 80, mu: 0.35, sigma: 0.65 },
     controls: [
-      { key: "samples", label: "サンプル数", min: 20, max: 120, step: 5, format: (v) => `${v}` },
+      { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
       { key: "mu", label: "平均 μ", min: -0.3, max: 1.0, step: 0.05, format: (v) => v.toFixed(2) },
       { key: "sigma", label: "標準偏差 σ", min: 0.2, max: 1.2, step: 0.05, format: (v) => v.toFixed(2) },
     ],
@@ -229,6 +305,7 @@ const state = {
   paused: false,
   rngSeed: 1337,
   physics: null,
+  threeScene: null,
   physicsComplete: false,
 };
 
@@ -246,6 +323,7 @@ const els = {
   reroll: document.getElementById("reroll-button"),
   pause: document.getElementById("pause-button"),
   canvas: document.getElementById("scene"),
+  canvas3d: document.getElementById("scene-3d"),
 };
 
 const ctx = els.canvas.getContext("2d");
@@ -263,183 +341,28 @@ const galtonBoard = createGaltonBoard({
   normalizeWeights,
   currentParams,
   roundRect,
-  drawHistogramStrip,
-  drawStaticChart,
+  drawHistogramStrip: (left, top, width, height) => drawHistogramStrip(ctx, state, left, top, width, height),
+  drawStaticChart: (width, height) => drawStaticChart(ctx, state, roundRect, width, height),
 });
 
-function cloneParams(params) {
-  return JSON.parse(JSON.stringify(params));
-}
-
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function makeHexagonVertices(radius) {
-  const verts = [];
-  for (let i = 0; i < 6; i += 1) {
-    const angle = (Math.PI / 3) * i + Math.PI / 6;
-    verts.push(planck.Vec2(Math.cos(angle) * radius, Math.sin(angle) * radius));
-  }
-  return verts;
-}
-
-function makeRotatedBoxVertices(hw, hh, angle) {
-  const cos = Math.cos(angle);
-  const sin = Math.sin(angle);
-  const corners = [
-    [-hw, -hh],
-    [hw, -hh],
-    [hw, hh],
-    [-hw, hh],
-  ];
-  return corners.map(([x, y]) => planck.Vec2(
-    x * cos - y * sin,
-    x * sin + y * cos,
-  ));
-}
-
-function lerp(a, b, t) {
-  return a + (b - a) * t;
-}
-
-function rng() {
-  state.rngSeed = (1664525 * state.rngSeed + 1013904223) >>> 0;
-  return state.rngSeed / 4294967296;
-}
-
-function randomBetween(min, max) {
-  return min + (max - min) * rng();
-}
-
-function factorial(n) {
-  let result = 1;
-  for (let i = 2; i <= n; i += 1) {
-    result *= i;
-  }
-  return result;
-}
-
-function choose(n, k) {
-  if (k < 0 || k > n) return 0;
-  if (k === 0 || k === n) return 1;
-  k = Math.min(k, n - k);
-  let result = 1;
-  for (let i = 1; i <= k; i += 1) {
-    result *= (n - k + i) / i;
-  }
-  return result;
-}
-
-function binomialSample(steps, p, rand) {
-  let successes = 0;
-  for (let i = 0; i < steps; i += 1) {
-    if (rand() < p) successes += 1;
-  }
-  return successes;
-}
-
-function hypergeometricSample(population, successes, draws, rand) {
-  let remainingPopulation = population;
-  let remainingSuccesses = successes;
-  let takenSuccesses = 0;
-  for (let i = 0; i < draws; i += 1) {
-    const p = remainingSuccesses / remainingPopulation;
-    if (rand() < p) {
-      takenSuccesses += 1;
-      remainingSuccesses -= 1;
-    }
-    remainingPopulation -= 1;
-  }
-  return takenSuccesses;
-}
-
-function poissonSample(lambda, rand) {
-  const limit = Math.exp(-lambda);
-  let product = 1;
-  let count = 0;
-  do {
-    count += 1;
-    product *= rand();
-  } while (product > limit);
-  return count - 1;
-}
-
-function exponentialSample(scale, rand) {
-  return -Math.log(1 - rand()) * scale;
-}
-
-function gammaSample(shape, scale, rand) {
-  let sum = 0;
-  for (let i = 0; i < shape; i += 1) {
-    sum += exponentialSample(scale, rand);
-  }
-  return sum;
-}
-
-function lognormalSample(mu, sigma, rand) {
-  const u1 = Math.max(rand(), 1e-9);
-  const u2 = rand();
-  const normal = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-  return Math.exp(mu + sigma * normal);
-}
-
-function gaussianProfile(binCount, mean, sd) {
-  const weights = [];
-  for (let k = 0; k < binCount; k += 1) {
-    const exponent = -((k - mean) ** 2) / (2 * sd * sd);
-    weights.push(Math.exp(exponent));
-  }
-  return weights;
-}
-
-function binomialPmf(n, k, p) {
-  return choose(n, k) * p ** k * (1 - p) ** (n - k);
-}
-
-function hypergeometricPmf(population, successes, draws, k) {
-  const lower = Math.max(0, draws - (population - successes));
-  const upper = Math.min(draws, successes);
-  if (k < lower || k > upper) return 0;
-  return (choose(successes, k) * choose(population - successes, draws - k)) / choose(population, draws);
-}
-
-function poissonPmf(lambda, k) {
-  return (Math.exp(-lambda) * lambda ** k) / factorial(k);
-}
-
-function exponentialPdf(x, scale) {
-  return x < 0 ? 0 : Math.exp(-x / scale) / scale;
-}
-
-function gammaPdf(x, shape, scale) {
-  if (x < 0) return 0;
-  const numerator = x ** (shape - 1) * Math.exp(-x / scale);
-  const denominator = factorial(shape - 1) * scale ** shape;
-  return numerator / denominator;
-}
-
-function lognormalPdf(x, mu, sigma) {
-  if (x <= 0) return 0;
-  const denom = x * sigma * Math.sqrt(2 * Math.PI);
-  const exponent = -((Math.log(x) - mu) ** 2) / (2 * sigma * sigma);
-  return Math.exp(exponent) / denom;
-}
-
-function normalizeWeights(weights, total) {
-  const sum = weights.reduce((acc, value) => acc + value, 0);
-  if (!sum) {
-    return weights.map(() => 0);
-  }
-  return weights.map((value) => (value / sum) * total);
-}
+const coinDiceScene = createCoinDiceScene({
+  canvas: els.canvas3d,
+  state,
+});
 
 function currentParams() {
   return state.params;
 }
 
 function sampleToBin(definition, rawValue, bins) {
-  if (definition.id === "normal" || definition.id === "binom" || definition.id === "hypergeom" || definition.id === "poisson") {
+  if (
+    definition.id === "normal"
+    || definition.id === "binom"
+    || definition.id === "hypergeom"
+    || definition.id === "poisson"
+    || definition.id === "coin3d"
+    || definition.id === "dice3d"
+  ) {
     return clamp(Math.round(rawValue), 0, bins - 1);
   }
 
@@ -480,7 +403,10 @@ function setActive(id) {
   state.params = cloneParams(definition.defaults);
   state.paused = false;
   els.pause.textContent = "一時停止";
-  if (definition.physics) {
+  if (definition.render3d) {
+    state.physics = null;
+    coinDiceScene.reset(definition.threeKind, false);
+  } else if (definition.physics) {
     galtonBoard.resetPhysics();
   } else {
     state.physics = null;
@@ -490,6 +416,7 @@ function setActive(id) {
   renderControls();
   renderDetails();
   resizeCanvas();
+  kickLoop();
 }
 
 function renderSelector() {
@@ -539,12 +466,16 @@ function renderControls() {
         [spec.key]: value,
       };
       output.textContent = spec.format(value);
-      if (state.active.physics) {
+      if (state.active.render3d) {
+        coinDiceScene.reset(state.active.threeKind, false);
+        renderDetails();
+      } else if (state.active.physics) {
         galtonBoard.resetPhysics();
       } else {
         buildHistogram(state.active, state.params);
         renderDetails();
       }
+      kickLoop();
     });
 
     wrap.append(row, input);
@@ -573,109 +504,19 @@ function renderDetails() {
 }
 
 function resizeCanvas() {
-  const rect = els.canvas.getBoundingClientRect();
+  const rect = els.canvas.parentElement.getBoundingClientRect();
   const ratio = window.devicePixelRatio || 1;
   els.canvas.width = Math.floor(rect.width * ratio);
   els.canvas.height = Math.floor(rect.height * ratio);
+  els.canvas3d.width = Math.floor(rect.width * ratio);
+  els.canvas3d.height = Math.floor(rect.height * ratio);
   ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
 }
 
-function roundRect(context, x, y, w, h, r) {
-  context.beginPath();
-  context.moveTo(x + r, y);
-  context.arcTo(x + w, y, x + w, y + h, r);
-  context.arcTo(x + w, y + h, x, y + h, r);
-  context.arcTo(x, y + h, x, y, r);
-  context.arcTo(x, y, x + w, y, r);
-  context.closePath();
-}
-
-function drawBackground(width, height) {
-  const gradient = ctx.createLinearGradient(0, 0, 0, height);
-  gradient.addColorStop(0, "#102036");
-  gradient.addColorStop(0.55, "#0b1627");
-  gradient.addColorStop(1, "#04070d");
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, width, height);
-
-  ctx.save();
-  ctx.translate(width / 2, height * 0.66);
-  ctx.rotate(-0.12);
-  ctx.strokeStyle = "rgba(255,255,255,0.06)";
-  ctx.lineWidth = 1;
-  for (let i = -10; i <= 10; i += 1) {
-    ctx.beginPath();
-    ctx.moveTo(-width, i * 34);
-    ctx.lineTo(width, i * 34);
-    ctx.stroke();
-  }
-  for (let i = -12; i <= 12; i += 1) {
-    ctx.beginPath();
-    ctx.moveTo(i * 48, -height);
-    ctx.lineTo(i * 48, height);
-    ctx.stroke();
-  }
-  ctx.restore();
-}
-
-function drawStaticChart(width, height) {
-  const bins = state.bins.length;
-  const left = width * 0.08;
-  const top = height * 0.14;
-  const chartWidth = width * 0.84;
-  const chartHeight = height * 0.54;
-  const binWidth = chartWidth / Math.max(bins, 1);
-  const max = Math.max(1, ...state.bins, ...state.theoretical);
-
-  ctx.save();
-  ctx.fillStyle = "rgba(255,255,255,0.04)";
-  roundRect(ctx, left - 12, top - 12, chartWidth + 24, chartHeight + 24, 18);
-  ctx.fill();
-  ctx.restore();
-
-  for (let i = 0; i < bins; i += 1) {
-    const actual = state.bins[i] || 0;
-    const theoretical = state.theoretical[i] || 0;
-    const actualHeight = (actual / max) * chartHeight;
-    const theoreticalHeight = (theoretical / max) * chartHeight;
-    const x = left + i * binWidth;
-
-    ctx.fillStyle = "rgba(245, 185, 66, 0.65)";
-    ctx.fillRect(x + 1, top + chartHeight - actualHeight, binWidth - 5, actualHeight);
-    ctx.fillStyle = "rgba(107, 220, 255, 0.85)";
-    ctx.fillRect(x + 3, top + chartHeight - theoreticalHeight, binWidth - 9, 4);
-  }
-
-  ctx.save();
-  ctx.fillStyle = "rgba(107, 220, 255, 0.9)";
-  ctx.font = "600 11px Trebuchet MS, sans-serif";
-  ctx.fillText("theoretical curve", left + 12, top + 14);
-  ctx.restore();
-}
-
-function drawHistogramStrip(left, top, width, height) {
-  const bins = state.bins.length;
-  const binWidth = width / Math.max(bins, 1);
-  const max = Math.max(1, ...state.bins, ...state.theoretical);
-
-  for (let i = 0; i < bins; i += 1) {
-    const actual = state.bins[i] || 0;
-    const theoretical = state.theoretical[i] || 0;
-    const actualHeight = (actual / max) * height;
-    const theoreticalHeight = (theoretical / max) * height;
-    const x = left + i * binWidth;
-
-    ctx.fillStyle = "rgba(245, 185, 66, 0.65)";
-    ctx.fillRect(x + 1, top + height - actualHeight, binWidth - 5, actualHeight);
-    ctx.fillStyle = "rgba(107, 220, 255, 0.85)";
-    ctx.fillRect(x + 3, top + height - theoreticalHeight, binWidth - 9, 4);
-  }
-
-  ctx.save();
-  ctx.fillStyle = "rgba(107, 220, 255, 0.9)";
-  ctx.font = "600 11px Trebuchet MS, sans-serif";
-  ctx.fillText("theoretical curve", left + 12, top + 14);
-  ctx.restore();
+function syncCanvasVisibility() {
+  const use3d = !!state.active.render3d;
+  els.canvas.hidden = use3d;
+  els.canvas3d.hidden = !use3d;
 }
 
 function drawLegend(width, height) {
@@ -686,18 +527,42 @@ function drawLegend(width, height) {
   ctx.restore();
 }
 
+function isAnimating() {
+  if (state.active.render3d) {
+    return !!(state.threeScene && state.threeScene.running && !state.threeScene.complete && !state.paused);
+  }
+  if (state.active.physics) {
+    return !!(state.physics && state.physics.running && !state.physics.complete && !state.paused);
+  }
+  return false;
+}
+
+function kickLoop() {
+  if (!loopRunning) {
+    loopRunning = true;
+    requestAnimationFrame(frame);
+  }
+}
+
 function frame(now) {
   const dt = lastFrameTime > 0 ? Math.min(now - lastFrameTime, 50) : 16.667;
   lastFrameTime = now;
-  const width = els.canvas.clientWidth;
-  const height = els.canvas.clientHeight;
-  ctx.clearRect(0, 0, width, height);
-  drawBackground(width, height);
+  const rect = els.canvas.parentElement.getBoundingClientRect();
+  const width = rect.width;
+  const height = rect.height;
+  syncCanvasVisibility();
+  if (state.active.render3d) {
+    coinDiceScene.step(dt);
+    coinDiceScene.render(width, height);
+  } else {
+    ctx.clearRect(0, 0, width, height);
+    drawBackground(ctx, width, height);
+  }
   if (state.active.physics) {
     galtonBoard.stepPhysics(dt);
     galtonBoard.drawPhysicsStage(width, height);
-  } else {
-    drawStaticChart(width, height);
+  } else if (!state.active.render3d) {
+    drawStaticChart(ctx, state, roundRect, width, height);
   }
 
   if (state.paused) {
@@ -712,10 +577,22 @@ function frame(now) {
     ctx.font = "700 14px Trebuchet MS, sans-serif";
     ctx.fillText("simulation complete", width - 178, 34);
     ctx.restore();
+  } else if (state.active.render3d && state.threeScene && state.threeScene.complete) {
+    ctx.save();
+    ctx.fillStyle = "rgba(107, 220, 255, 0.72)";
+    ctx.font = "700 14px Trebuchet MS, sans-serif";
+    ctx.fillText("simulation complete", width - 178, 34);
+    ctx.restore();
   }
 
-  drawLegend(width, height);
-  requestAnimationFrame(frame);
+  if (!state.active.render3d) {
+    drawLegend(width, height);
+  }
+  if (isAnimating()) {
+    requestAnimationFrame(frame);
+  } else {
+    loopRunning = false;
+  }
 }
 
 // When tab is hidden, requestAnimationFrame stops. Run a setInterval fallback
@@ -726,31 +603,59 @@ setInterval(() => {
     const dt = lastFrameTime > 0 ? Math.min(now - lastFrameTime, 50) : 16.667;
     lastFrameTime = now;
     galtonBoard.stepPhysics(dt);
+  } else if (document.hidden && state.active.render3d && !state.paused) {
+    const now = performance.now();
+    const dt = lastFrameTime > 0 ? Math.min(now - lastFrameTime, 50) : 16.667;
+    lastFrameTime = now;
+    coinDiceScene.step(dt);
   }
 }, 20);
 
 els.reroll.addEventListener("click", () => {
   state.rngSeed = (state.rngSeed + 1) >>> 0;
-  if (state.active.physics) {
+  if (state.active.render3d) {
+    coinDiceScene.reset(state.active.threeKind, true);
+  } else if (state.active.physics) {
     galtonBoard.resetPhysics(true);
   } else {
     buildHistogram(state.active, state.params);
     renderDetails();
   }
+  kickLoop();
+});
+
+els.pause.addEventListener("click", () => {
+  const paused = !state.paused;
+  if (state.active.render3d) {
+    coinDiceScene.setPaused(paused);
+  } else if (state.active.physics) {
+    galtonBoard.setPaused(paused);
+  } else {
+    state.paused = paused;
+  }
+  els.pause.textContent = paused ? "再開" : "一時停止";
+  if (!paused) kickLoop();
 });
 
 function bootstrap() {
   renderSelector();
   renderControls();
-  if (state.active.physics) {
+  syncCanvasVisibility();
+  if (state.active.render3d) {
+    coinDiceScene.reset(state.active.threeKind, false);
+  } else if (state.active.physics) {
     galtonBoard.resetPhysics();
   } else {
     buildHistogram(state.active, state.params);
   }
   renderDetails();
   resizeCanvas();
-  requestAnimationFrame(frame);
+  kickLoop();
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) kickLoop();
+});
 
 try {
   bootstrap();
