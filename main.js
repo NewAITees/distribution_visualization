@@ -3,6 +3,7 @@
 const SCALE = 50;
 const toW = (px) => px / SCALE;  // pixels → meters
 const toS = (m) => m * SCALE;    // meters → pixels
+const GALTON_BIAS_P = 0.68;
 
 let lastFrameTime = 0;
 
@@ -15,11 +16,10 @@ const distributionSpecs = {
     description:
       "Galton board の中心。左右分岐を繰り返した結果が、3D の積層としてまとまる。実際の衝突で釘を通過した結果を集計する。",
     evaluation: ["適切性: ◎", "見栄え: ◎", "わかりやすさ: ◎", "物理演算: ◎"],
-    defaults: { samples: 500, steps: 14, p: 0.5 },
+    defaults: { samples: 500, steps: 14 },
     controls: [
       { key: "samples", label: "サンプル数", min: 20, max: 120, step: 5, format: (v) => `${v}` },
       { key: "steps", label: "段数", min: 8, max: 20, step: 1, format: (v) => `${v}` },
-      { key: "p", label: "右へ進む確率 p", min: 0.1, max: 0.9, step: 0.01, format: (v) => v.toFixed(2) },
     ],
     binsFor(params) {
       return params.steps + 1;
@@ -27,11 +27,11 @@ const distributionSpecs = {
     physics: true,
     physicsMode: "galton",
     sample(params, rand) {
-      return binomialSample(params.steps, params.p, rand);
+      return binomialSample(params.steps, 0.5, rand);
     },
     theoretical(params, bins) {
-      const mean = params.steps * params.p;
-      const variance = params.steps * params.p * (1 - params.p);
+      const mean = params.steps * 0.5;
+      const variance = params.steps * 0.5 * (1 - 0.5);
       const sd = Math.sqrt(Math.max(variance, 1e-6));
       return gaussianProfile(bins, mean, sd);
     },
@@ -42,26 +42,26 @@ const distributionSpecs = {
     tag: "biased branching",
     shape: "非対称",
     description:
-      "Galton と同じ舞台で、成功確率 p をずらして見せる。ボード全体に横方向の偏りを与えて実際の衝突をずらす。",
+      "Galton と同じ舞台で、左右の偏りを変えて見せる。ボード全体に横方向の偏りを与えて実際の衝突をずらす。",
     evaluation: ["適切性: ◎", "見栄え: ○", "わかりやすさ: ◎", "物理演算: ◎"],
-    defaults: { samples: 500, steps: 14, p: 0.68 },
+    defaults: { samples: 500, steps: 14 },
     controls: [
       { key: "samples", label: "サンプル数", min: 20, max: 120, step: 5, format: (v) => `${v}` },
       { key: "steps", label: "段数", min: 8, max: 20, step: 1, format: (v) => `${v}` },
-      { key: "p", label: "成功確率 p", min: 0.05, max: 0.95, step: 0.01, format: (v) => v.toFixed(2) },
     ],
     binsFor(params) {
       return params.steps + 1;
     },
     physics: true,
     physicsMode: "biased",
+    biasP: GALTON_BIAS_P,
     sample(params, rand) {
-      return binomialSample(params.steps, params.p, rand);
+      return binomialSample(params.steps, GALTON_BIAS_P, rand);
     },
     theoretical(params, bins) {
       const weights = [];
       for (let k = 0; k < bins; k += 1) {
-        weights.push(binomialPmf(params.steps, k, params.p));
+        weights.push(binomialPmf(params.steps, k, GALTON_BIAS_P));
       }
       return weights;
     },
@@ -732,7 +732,7 @@ setInterval(() => {
 els.reroll.addEventListener("click", () => {
   state.rngSeed = (state.rngSeed + 1) >>> 0;
   if (state.active.physics) {
-    galtonBoard.resetPhysics();
+    galtonBoard.resetPhysics(true);
   } else {
     buildHistogram(state.active, state.params);
     renderDetails();

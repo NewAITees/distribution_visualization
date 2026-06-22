@@ -18,7 +18,7 @@ function createGaltonBoard(deps) {
 
   let physicsAccumulator = 0;
 
-  function resetPhysics() {
+  function resetPhysics(startImmediately = false) {
     const definition = state.active;
     const params = currentParams();
     const width = els.canvas.clientWidth || 1;
@@ -53,8 +53,9 @@ function createGaltonBoard(deps) {
     board.binTopY = Math.min(height - 150, pegBottomY + 48);
     board.binBottomY = Math.min(height - 100, board.binTopY + 80);
 
+    const biasP = definition.biasP ?? 0.5;
     const gravX = (definition.physicsMode === "biased")
-      ? clamp((params.p - 0.5) * 2, -1, 1)
+      ? clamp((biasP - 0.5) * 2, -1, 1)
       : 0;
     const world = planck.World({ gravity: planck.Vec2(gravX, 15) });
 
@@ -210,6 +211,7 @@ function createGaltonBoard(deps) {
       boardWidth,
       pegs,
       balls,
+      running: startImmediately,
       guardTopLX: leftRail.topX,
       guardTopRX: rightRail.topX,
       guardTopY: grTopY,
@@ -231,15 +233,20 @@ function createGaltonBoard(deps) {
     state.paused = false;
     els.pause.textContent = "一時停止";
 
-    spawnBall();
+    if (startImmediately) {
+      spawnBall();
+    }
   }
 
   function spawnBall() {
     const physics = state.physics;
     if (!physics || physics.spawned >= physics.total) return;
     const params = currentParams();
+    const biasP = state.active.biasP ?? 0.5;
 
-    const drift = clamp((params.p - 0.5) * 0.14, -0.08, 0.08);
+    const drift = state.active.physicsMode === "biased"
+      ? clamp((biasP - 0.5) * 0.14, -0.08, 0.08)
+      : 0;
     const jitter = (Math.random() - 0.5) * 1.5;
     const x = physics.board.centerX + jitter + drift * physics.binWidth * 0.5;
 
@@ -265,7 +272,7 @@ function createGaltonBoard(deps) {
 
   function stepPhysics(dtMs) {
     const physics = state.physics;
-    if (!physics || state.paused) return;
+    if (!physics || state.paused || !physics.running) return;
 
     physics.spawnTimer += dtMs;
     while (physics.spawnTimer >= physics.spawnInterval && physics.spawned < physics.total) {
