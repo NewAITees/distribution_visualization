@@ -50,6 +50,12 @@ export function binomialSample(steps, p, rand) {
   return count;
 }
 
+export function firstSuccessSample(p, rand) {
+  if (p <= 0) return Number.POSITIVE_INFINITY;
+  if (p >= 1) return 1;
+  return Math.floor(Math.log1p(-rand()) / Math.log1p(-p)) + 1;
+}
+
 export function hypergeometricSample(population, successes, draws, rand) {
   let remainingSuccesses = successes;
   let remainingPopulation = population;
@@ -106,6 +112,11 @@ export function gaussianProfile(binCount, mean, sd) {
 
 export function binomialPmf(n, k, p) {
   return choose(n, k) * (p ** k) * ((1 - p) ** (n - k));
+}
+
+export function firstSuccessPmf(attempts, p) {
+  if (attempts < 1 || p <= 0 || p > 1) return 0;
+  return p * ((1 - p) ** (attempts - 1));
 }
 
 export function hypergeometricPmf(population, successes, draws, k) {

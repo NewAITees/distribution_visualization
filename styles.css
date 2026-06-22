@@ -320,6 +320,12 @@ h1 {
   margin-top: 18px;
 }
 
+.rare-summary {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
 .stat-card {
   padding: 14px;
   border-radius: 18px;

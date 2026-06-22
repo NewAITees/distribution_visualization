@@ -1,6 +1,7 @@
 import { createGaltonBoard } from "./src/scenes/galton/index.js";
 import { createCoinDiceScene } from "./src/scenes/coin-dice/index.js";
 import { createBingoMachineScene } from "./src/scenes/bingo-machine/index.js";
+import { simulateRareBingo } from "./src/core/rare.js";
 import {
   SCALE,
   toW,
@@ -25,7 +26,7 @@ import {
   makeHexagonVertices,
   makeRotatedBoxVertices,
 } from "./src/core/math.js";
-import { drawBackground, roundRect, drawStaticChart, drawHistogramStrip } from "./src/core/canvas.js";
+import { drawBackground, roundRect, drawStaticChart, drawHistogramStrip, drawRareProgression } from "./src/core/canvas.js";
 
 const GALTON_BIAS_P = 0.68;
 
@@ -333,6 +334,66 @@ const distributionSpecs = {
       return weights;
     },
   },
+  binom_bingo: {
+    id: "binom_bingo",
+    title: "二項分布（抽選）",
+    tag: "bingo machine",
+    shape: "戻す抽選",
+    description:
+      "3D のビンゴマシンで玉を戻しながら抽出し、成功数を集計する。毎回同じ確率で引くため二項分布になる。超幾何分布と対比して「戻す」と「戻さない」の違いを見せる。",
+    evaluation: ["適切性: ◎", "見栄え: ○", "わかりやすさ: ○", "物理演算: ○"],
+    defaults: { samples: 80, population: 40, successes: 14, draws: 6 },
+    controls: [
+      { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
+      { key: "population", label: "母集団サイズ", min: 12, max: 80, step: 1, format: (v) => `${v}` },
+      { key: "successes", label: "成功個数", min: 1, max: 40, step: 1, format: (v) => `${v}` },
+      { key: "draws", label: "取り出し数", min: 1, max: 12, step: 1, format: (v) => `${v}` },
+    ],
+    binsFor(params) {
+      return params.draws + 1;
+    },
+    physics: false,
+    render3d: true,
+    threeKind: "bingo_replace",
+    sample(params, rand) {
+      const p = params.successes / Math.max(1, params.population);
+      return binomialSample(params.draws, p, rand);
+    },
+    theoretical(params, bins) {
+      const p = params.successes / Math.max(1, params.population);
+      const weights = [];
+      for (let k = 0; k < bins; k += 1) {
+        weights.push(binomialPmf(params.draws, k, p));
+      }
+      return weights;
+    },
+  },
+  rarehunt: {
+    id: "rarehunt",
+    title: "レア到達シミュレーション",
+    tag: "bingo machine",
+    shape: "初当たりまで",
+    description:
+      "戻すタイプのビンゴマシンを大量に独立試行し、初当たりまでの平均回数と 50% / 80% 到達回数を出す。入力した当たり確率から、累積到達率がどう増えていくかを確認する。",
+    evaluation: ["適切性: ◎", "見栄え: △", "わかりやすさ: ◎", "物理演算: △"],
+    defaults: { samples: 5000, probabilityPercent: 0.01 },
+    controls: [
+      { key: "samples", label: "ビンゴマシン数", min: 1000, max: 20000, step: 500, format: (v) => `${v}` },
+      {
+        key: "probabilityPercent",
+        label: "当たり確率 (%)",
+        min: 0.001,
+        max: 100,
+        step: 0.001,
+        inputType: "number",
+        format: (v) => `${Number(v).toFixed(3)}%`,
+      },
+    ],
+    binsFor() {
+      return 0;
+    },
+    rareAnalysis: true,
+  },
   poisson: {
     id: "poisson",
     title: "ポアソン分布",
@@ -463,6 +524,7 @@ const state = {
   samples: [],
   bins: [],
   theoretical: [],
+  rareReport: null,
   paused: false,
   rngSeed: 1337,
   physics: null,
@@ -485,6 +547,12 @@ const els = {
   pause: document.getElementById("pause-button"),
   canvas: document.getElementById("scene"),
   canvas3d: document.getElementById("scene-3d"),
+  rareSummary: document.getElementById("rare-summary"),
+  rareAverage: document.getElementById("rare-average"),
+  rareThreshold50: document.getElementById("rare-threshold-50"),
+  rareThreshold80: document.getElementById("rare-threshold-80"),
+  rareMachines: document.getElementById("rare-machines"),
+  rareNote: document.getElementById("rare-note"),
 };
 
 const ctx = els.canvas.getContext("2d");
@@ -517,11 +585,33 @@ const bingoMachineScene = createBingoMachineScene({
 });
 
 function getThreeScene(definition) {
-  return definition.threeKind === "bingo" ? bingoMachineScene : coinDiceScene;
+  return definition.threeKind === "bingo" || definition.threeKind === "bingo_replace" ? bingoMachineScene : coinDiceScene;
 }
 
 function currentParams() {
   return state.params;
+}
+
+function formatCount(value) {
+  if (value == null || Number.isNaN(value)) return "-";
+  return Number.isFinite(value) ? `${Math.round(value).toLocaleString("ja-JP")}回` : "∞";
+}
+
+function formatAverage(value) {
+  if (value == null || Number.isNaN(value)) return "-";
+  if (!Number.isFinite(value)) return "∞";
+  return `${value.toLocaleString("ja-JP", { maximumFractionDigits: 1 })}回`;
+}
+
+function buildRareReport(params) {
+  state.rareReport = simulateRareBingo({
+    probabilityPercent: params.probabilityPercent,
+    machineCount: params.samples,
+    seed: state.rngSeed,
+  });
+  state.samples = [];
+  state.bins = Array.from({ length: state.rareReport.curvePoints.length }, () => 0);
+  state.theoretical = [];
 }
 
 function sampleToBin(definition, rawValue, bins) {
@@ -547,9 +637,10 @@ function buildHistogram(definition, params) {
   const bins = definition.binsFor(params);
   const samples = [];
   const histogram = Array.from({ length: bins }, () => 0);
+  const random = rng(state.rngSeed);
 
   for (let i = 0; i < params.samples; i += 1) {
-    const raw = definition.sample(params, rng);
+    const raw = definition.sample(params, random);
     const bin = sampleToBin(definition, raw, bins);
     samples.push(raw);
     histogram[bin] += 1;
@@ -566,7 +657,11 @@ function setActive(id) {
   state.params = cloneParams(definition.defaults);
   state.paused = false;
   els.pause.textContent = "一時停止";
-  if (definition.render3d) {
+  if (definition.rareAnalysis) {
+    state.physics = null;
+    state.threeScene = null;
+    buildRareReport(state.params);
+  } else if (definition.render3d) {
     state.physics = null;
     getThreeScene(definition).reset(definition.threeKind || definition.id, false);
   } else if (definition.physics) {
@@ -617,19 +712,29 @@ function renderControls() {
 
     const input = document.createElement("input");
     input.id = `param-${spec.key}`;
-    input.type = "range";
+    input.type = spec.inputType || "range";
+    if (spec.inputType === "number") {
+      input.inputMode = "decimal";
+    }
     input.min = String(spec.min);
     input.max = String(spec.max);
     input.step = String(spec.step);
     input.value = String(params[spec.key]);
     input.addEventListener("input", () => {
-      const value = spec.step === 1 ? Math.round(Number(input.value)) : Number(input.value);
+      const rawValue = Number(input.value);
+      const numericValue = Number.isFinite(rawValue) ? rawValue : spec.min;
+      const value = spec.inputType === "number"
+        ? clamp(numericValue, spec.min, spec.max)
+        : (spec.step === 1 ? Math.round(numericValue) : numericValue);
       state.params = {
         ...state.params,
         [spec.key]: value,
       };
       output.textContent = spec.format(value);
-      if (state.active.render3d) {
+      if (state.active.rareAnalysis) {
+        buildRareReport(state.params);
+        renderDetails();
+      } else if (state.active.render3d) {
         getThreeScene(state.active).reset(state.active.threeKind || state.active.id, false);
         renderDetails();
       } else if (state.active.physics) {
@@ -664,6 +769,25 @@ function renderDetails() {
 
   const peak = state.bins.length ? state.bins.reduce((best, value, index) => (value > state.bins[best] ? index : best), 0) : 0;
   els.peakBin.textContent = String(peak);
+
+  const rareVisible = !!state.active.rareAnalysis;
+  els.rareSummary.hidden = !rareVisible;
+  if (rareVisible && state.rareReport) {
+    const report = state.rareReport;
+    els.peakBin.textContent = formatCount(report.maxObserved);
+    els.rareAverage.textContent = formatAverage(report.averageAttempts);
+    els.rareThreshold50.textContent = formatCount(report.threshold50);
+    els.rareThreshold80.textContent = formatCount(report.threshold80);
+    els.rareMachines.textContent = `${report.machineCount.toLocaleString("ja-JP")}台`;
+    const noteParts = [
+      `入力確率 ${report.probabilityPercent.toFixed(3)}%`,
+      `理論上の 50% 到達は ${formatCount(report.theoretical50)}`,
+      `理論上の 80% 到達は ${formatCount(report.theoretical80)}`,
+    ];
+    els.rareNote.textContent = noteParts.join(" / ");
+  } else if (els.rareNote) {
+    els.rareNote.textContent = "";
+  }
 }
 
 function resizeCanvas() {
@@ -724,6 +848,8 @@ function frame(now) {
   if (state.active.physics) {
     galtonBoard.stepPhysics(dt);
     galtonBoard.drawPhysicsStage(width, height);
+  } else if (state.active.rareAnalysis) {
+    drawRareProgression(ctx, state.rareReport, roundRect, width, height);
   } else if (!state.active.render3d) {
     drawStaticChart(ctx, state, roundRect, width, height);
   }
@@ -748,7 +874,7 @@ function frame(now) {
     ctx.restore();
   }
 
-  if (!state.active.render3d) {
+  if (!state.active.render3d && !state.active.rareAnalysis) {
     drawLegend(width, height);
   }
   if (isAnimating()) {
@@ -776,7 +902,10 @@ setInterval(() => {
 
 els.reroll.addEventListener("click", () => {
   state.rngSeed = (state.rngSeed + 1) >>> 0;
-  if (state.active.render3d) {
+  if (state.active.rareAnalysis) {
+    buildRareReport(state.params);
+    renderDetails();
+  } else if (state.active.render3d) {
     getThreeScene(state.active).reset(state.active.threeKind || state.active.id, true);
   } else if (state.active.physics) {
     galtonBoard.resetPhysics(true);
@@ -804,7 +933,9 @@ function bootstrap() {
   renderSelector();
   renderControls();
   syncCanvasVisibility();
-  if (state.active.render3d) {
+  if (state.active.rareAnalysis) {
+    buildRareReport(state.params);
+  } else if (state.active.render3d) {
     getThreeScene(state.active).reset(state.active.threeKind || state.active.id, false);
   } else if (state.active.physics) {
     galtonBoard.resetPhysics();

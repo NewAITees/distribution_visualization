@@ -85,6 +85,31 @@
             </div>
           </div>
 
+          <section id="rare-summary" class="rare-summary" hidden>
+            <div class="panel-title secondary">
+              <h3>Rare hit report</h3>
+            </div>
+            <div class="stats-grid rare-stats-grid">
+              <div class="stat-card">
+                <span>平均回数</span>
+                <strong id="rare-average">-</strong>
+              </div>
+              <div class="stat-card">
+                <span>50%到達</span>
+                <strong id="rare-threshold-50">-</strong>
+              </div>
+              <div class="stat-card">
+                <span>80%到達</span>
+                <strong id="rare-threshold-80">-</strong>
+              </div>
+              <div class="stat-card">
+                <span>試行機数</span>
+                <strong id="rare-machines">-</strong>
+              </div>
+            </div>
+            <p id="rare-note" class="description"></p>
+          </section>
+
           <div class="panel-title secondary">
             <h3>Parameters</h3>
           </div>
@@ -124,7 +149,6 @@
     </main>
 
     <script src="node_modules/planck/dist/planck.min.js"></script>
-    <script src="galton-board.js?v=20260622"></script>
-    <script src="main.js?v=20260622"></script>
+    <script type="module" src="main.js?v=20260622"></script>
   </body>
 </html>

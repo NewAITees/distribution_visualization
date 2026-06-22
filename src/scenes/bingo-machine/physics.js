@@ -109,19 +109,18 @@ export function createBingoPhysics({
   }
 
   function scoreReleaseCandidate(ball) {
-    const dx = ball.position.x - releaseX;
-    const dy = ball.position.y - releaseY;
-    const dz = ball.position.z - releaseZ;
-    return dx * dx * 1.4 + dy * dy * 2.4 + dz * dz * 1.1;
+    // World-space: pick the lowest ball (most negative Y)
+    return ball.position.y;
   }
 
   function step(dt, drumAngle, drumAngVel, releaseLimit = 1) {
     gateCooldown = Math.max(0, gateCooldown - dt);
 
-    // World gravity transformed into drum local space (X-axis rotation only)
-    const gY = -9.4 * Math.cos(drumAngle);
-    const gZ = 9.4 * Math.sin(drumAngle);
-    const releaseWindowOpen = gateCooldown <= 0 && Math.abs(Math.sin(drumAngle)) < 0.22;
+    // World-space gravity (balls live in world space, not drum-local)
+    const gY = -9.4;
+    const gZ = 0;
+    // Gate opens when drum outlet faces downward (cos > 0 ensures angle near 0, not π)
+    const releaseWindowOpen = gateCooldown <= 0 && Math.abs(Math.sin(drumAngle)) < 0.22 && Math.cos(drumAngle) > 0;
     const released = [];
     let remainingReleases = Math.max(0, releaseLimit);
 
@@ -165,9 +164,8 @@ export function createBingoPhysics({
       for (let i = 0; i < balls.length; i += 1) {
         const ball = balls[i];
         if (ball.released) continue;
+        // World-space: just check ball is near the bottom of the cage
         if (ball.position.y > releaseY + 0.2) continue;
-        if (Math.abs(ball.position.z - releaseZ) > 0.95) continue;
-        if (Math.abs(ball.position.x - releaseX) > 1.15) continue;
         const score = scoreReleaseCandidate(ball);
         if (score < bestScore) {
           bestScore = score;

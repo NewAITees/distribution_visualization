@@ -1,6 +1,6 @@
 import { createThreeRuntime, createThreeRenderer } from "../../three/runtime.js";
 import { createBingoPhysics } from "./physics.js";
-import { hypergeometricPmf, normalizeWeights } from "../../core/math.js";
+import { hypergeometricPmf, binomialPmf, normalizeWeights } from "../../core/math.js";
 
 function shuffle(values) {
   for (let i = values.length - 1; i > 0; i -= 1) {
@@ -111,6 +111,7 @@ export function createBingoMachineScene({ canvas, state }) {
 
   const runtimeState = {
     mode: "hypergeom",
+    withReplacement: false,
     running: false,
     paused: false,
     complete: false,
@@ -183,7 +184,7 @@ export function createBingoMachineScene({ canvas, state }) {
       const z = Math.sin(theta) * rr;
       mesh.position.set(x, y, z);
       mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
-      drum.add(mesh);
+      boardGroup.add(mesh);
 
       const body = {
         success,
@@ -207,22 +208,37 @@ export function createBingoMachineScene({ canvas, state }) {
     runtimeState.trialIndex = index;
     runtimeState.currentTrial = buildTrial();
     populateTrial(runtimeState.currentTrial);
-    runtimeState.spinSpeed = 0.9 + Math.random() * 0.35;
+    runtimeState.spinSpeed = runtimeState.withReplacement
+      ? 3.0 + Math.random() * 0.5
+      : 0.9 + Math.random() * 0.35;
   }
 
   function promoteReleasedBall(ball) {
-    const worldPos = new THREE.Vector3();
-    const worldQuat = new THREE.Quaternion();
-    ball.mesh.getWorldPosition(worldPos);
-    ball.mesh.getWorldQuaternion(worldQuat);
-    drum.remove(ball.mesh);
+    // Ball is already in boardGroup (world space) — just move to scene for settling
+    const pos = ball.mesh.position.clone();
+    ball.mesh.parent.remove(ball.mesh);
     scene.add(ball.mesh);
-    ball.mesh.position.copy(worldPos);
-    ball.mesh.quaternion.copy(worldQuat);
+    ball.mesh.position.copy(pos);
     runtimeState.escapedBalls.push({
       mesh: ball.mesh,
       velocity: ball.velocity.clone().multiplyScalar(0.65).add(new THREE.Vector3((Math.random() - 0.5) * 0.25, -0.22, (Math.random() - 0.5) * 0.25)),
     });
+  }
+
+  function returnBallToDrum(ball) {
+    const theta = Math.random() * Math.PI * 2;
+    const rr = Math.random() * 0.8;
+    ball.position.set(
+      Math.cos(theta) * rr,
+      1.6 + Math.random() * 0.8,
+      Math.sin(theta) * rr,
+    );
+    ball.velocity.set(
+      (Math.random() - 0.5) * 0.4,
+      -(0.3 + Math.random() * 0.4),
+      (Math.random() - 0.5) * 0.4,
+    );
+    ball.released = false;
   }
 
   function finishTrial() {
@@ -242,6 +258,7 @@ export function createBingoMachineScene({ canvas, state }) {
 
   function reset(kind, startImmediately = false) {
     runtimeState.mode = kind;
+    runtimeState.withReplacement = kind === "bingo_replace";
     runtimeState.running = startImmediately;
     runtimeState.paused = false;
     runtimeState.complete = false;
@@ -250,15 +267,27 @@ export function createBingoMachineScene({ canvas, state }) {
     runtimeState.escapedBalls = [];
     runtimeState.spinSpeed = 1.0;
 
-    const draws = Math.max(1, Math.min(state.params.population || 1, state.params.draws || 1));
+    const population = Math.max(1, state.params.population || 1);
+    const successes = Math.max(0, Math.min(population, state.params.successes || 0));
+    const draws = Math.max(1, Math.min(population, state.params.draws || 1));
     state.bins = Array.from({ length: draws + 1 }, () => 0);
     state.samples = [];
-    state.theoretical = normalizeWeights(
-      Array.from({ length: draws + 1 }, (_, index) =>
-        hypergeometricPmf(state.params.population, state.params.successes, state.params.draws, index),
-      ),
-      state.params.samples,
-    );
+
+    if (runtimeState.withReplacement) {
+      const p = successes / population;
+      state.theoretical = normalizeWeights(
+        Array.from({ length: draws + 1 }, (_, k) => binomialPmf(draws, k, p)),
+        state.params.samples,
+      );
+    } else {
+      state.theoretical = normalizeWeights(
+        Array.from({ length: draws + 1 }, (_, k) =>
+          hypergeometricPmf(population, successes, draws, k),
+        ),
+        state.params.samples,
+      );
+    }
+
     state.paused = false;
     state.threeScene = runtimeState;
     startTrial(0);
@@ -293,25 +322,36 @@ export function createBingoMachineScene({ canvas, state }) {
   function step(dtMs) {
     if (!runtimeState.running || runtimeState.paused || runtimeState.complete) return;
 
-    const dt = dtMs / 1000;
-    drum.rotation.x += runtimeState.spinSpeed * dt;
-    ring.rotation.z += dt * 0.35;
+    const substeps = runtimeState.withReplacement ? 4 : 1;
+    const dt = dtMs / 1000 / substeps;
 
-    const trial = runtimeState.currentTrial;
-    const remainingDraws = trial ? Math.max(0, trial.draws - trial.drawsDone) : 0;
-    const released = physics.step(dt, drum.rotation.x, runtimeState.spinSpeed, Math.min(1, remainingDraws));
-    released.forEach((ball) => {
-      if (!trial || trial.finished) return;
-      trial.drawsDone += 1;
-      if (ball.success) trial.drawnSuccesses += 1;
-      promoteReleasedBall(ball);
-    });
+    for (let s = 0; s < substeps; s++) {
+      drum.rotation.x += runtimeState.spinSpeed * dt;
+      ring.rotation.z += dt * 0.35;
 
-    settleEscapedBalls(dt);
+      const trial = runtimeState.currentTrial;
+      if (!trial || trial.finished) break;
 
-    if (trial && trial.drawsDone >= trial.draws) {
-      finishTrial();
+      const remainingDraws = Math.max(0, trial.draws - trial.drawsDone);
+      const released = physics.step(dt, drum.rotation.x, runtimeState.spinSpeed, Math.min(1, remainingDraws));
+      released.forEach((ball) => {
+        if (trial.finished) return;
+        trial.drawsDone += 1;
+        if (ball.success) trial.drawnSuccesses += 1;
+        if (runtimeState.withReplacement) {
+          returnBallToDrum(ball);
+        } else {
+          promoteReleasedBall(ball);
+        }
+      });
+
+      if (trial.drawsDone >= trial.draws) {
+        finishTrial();
+        break;
+      }
     }
+
+    settleEscapedBalls(dtMs / 1000);
   }
 
   function render(width, height) {
