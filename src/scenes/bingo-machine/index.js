@@ -299,7 +299,7 @@ export function createBingoMachineScene({ canvas, state }) {
 
     const trial = runtimeState.currentTrial;
     const remainingDraws = trial ? Math.max(0, trial.draws - trial.drawsDone) : 0;
-    const released = physics.step(dt, drum.rotation.x, Math.min(1, remainingDraws));
+    const released = physics.step(dt, drum.rotation.x, runtimeState.spinSpeed, Math.min(1, remainingDraws));
     released.forEach((ball) => {
       if (!trial || trial.finished) return;
       trial.drawsDone += 1;

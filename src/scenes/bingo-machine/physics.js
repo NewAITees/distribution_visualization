@@ -15,13 +15,12 @@ export function createBingoPhysics({
   cageRadius = 2.95,
   ballRadius = 0.22,
   restitution = 0.62,
-  wallFriction = 0.985,
+  tangentialFriction = 0.28,
   releaseY = -2.18,
   releaseZ = 0.42,
   releaseX = 0.9,
 }) {
   const balls = [];
-  const scratch = { x: 0, y: 0, z: 0 };
   let gateCooldown = 0;
 
   function addBall(ball) {
@@ -66,15 +65,15 @@ export function createBingoPhysics({
     b.velocity.z += impulse * invMassB * nz;
   }
 
-  function handleShell(ball) {
-    const x = ball.position.x;
-    const y = ball.position.y;
-    const z = ball.position.z;
-    const radial = length3(x, y, z);
+  function handleShell(ball, drumAngVel) {
+    const px = ball.position.x;
+    const py = ball.position.y;
+    const pz = ball.position.z;
+    const radial = length3(px, py, pz);
     const limit = cageRadius - (ball.radius || ballRadius);
     if (radial <= limit) return;
 
-    const [nx, ny, nz] = normalize3(x, y, z);
+    const [nx, ny, nz] = normalize3(px, py, pz);
     ball.position.x = nx * limit;
     ball.position.y = ny * limit;
     ball.position.z = nz * limit;
@@ -82,12 +81,31 @@ export function createBingoPhysics({
     const vn = ball.velocity.x * nx + ball.velocity.y * ny + ball.velocity.z * nz;
     if (vn > 0) return;
 
+    // Normal restitution impulse
     ball.velocity.x -= (1 + restitution) * vn * nx;
     ball.velocity.y -= (1 + restitution) * vn * ny;
     ball.velocity.z -= (1 + restitution) * vn * nz;
-    ball.velocity.x *= wallFriction;
-    ball.velocity.y *= wallFriction;
-    ball.velocity.z *= wallFriction;
+
+    // Wall tangential velocity: ω × contact_point
+    // ω = (drumAngVel, 0, 0)  →  (ω,0,0)×(px,py,pz) = (0, -ω*pz, ω*py)
+    const wallVy = -drumAngVel * pz;
+    const wallVz = drumAngVel * py;
+
+    // Relative velocity of ball with respect to wall
+    const relvx = ball.velocity.x;
+    const relvy = ball.velocity.y - wallVy;
+    const relvz = ball.velocity.z - wallVz;
+
+    // Strip normal component → tangential only
+    const relvn = relvx * nx + relvy * ny + relvz * nz;
+    const reltx = relvx - relvn * nx;
+    const relty = relvy - relvn * ny;
+    const reltz = relvz - relvn * nz;
+
+    // Transfer tangential velocity from wall to ball (friction impulse)
+    ball.velocity.x -= reltx * tangentialFriction;
+    ball.velocity.y -= relty * tangentialFriction;
+    ball.velocity.z -= reltz * tangentialFriction;
   }
 
   function scoreReleaseCandidate(ball) {
@@ -97,37 +115,33 @@ export function createBingoPhysics({
     return dx * dx * 1.4 + dy * dy * 2.4 + dz * dz * 1.1;
   }
 
-  function step(dt, drumAngle, releaseLimit = 1) {
+  function step(dt, drumAngle, drumAngVel, releaseLimit = 1) {
     gateCooldown = Math.max(0, gateCooldown - dt);
 
+    // World gravity transformed into drum local space (X-axis rotation only)
     const gY = -9.4 * Math.cos(drumAngle);
     const gZ = 9.4 * Math.sin(drumAngle);
     const releaseWindowOpen = gateCooldown <= 0 && Math.abs(Math.sin(drumAngle)) < 0.22;
     const released = [];
     let remainingReleases = Math.max(0, releaseLimit);
 
-    balls.forEach((ball, index) => {
+    balls.forEach((ball) => {
       if (ball.released) return;
 
       ball.velocity.y += gY * dt;
       ball.velocity.z += gZ * dt;
 
-      const swirl = 0.65 + index * 0.002;
-      scratch.x = 0;
-      scratch.y = -ball.position.z * swirl;
-      scratch.z = ball.position.y * swirl;
-      ball.velocity.y += scratch.y * dt;
-      ball.velocity.z += scratch.z * dt;
-
-      ball.velocity.x *= 0.996;
-      ball.velocity.y *= 0.996;
-      ball.velocity.z *= 0.996;
+      // Gentle damping to prevent runaway energy accumulation
+      ball.velocity.x *= 0.999;
+      ball.velocity.y *= 0.999;
+      ball.velocity.z *= 0.999;
 
       ball.position.x += ball.velocity.x * dt;
       ball.position.y += ball.velocity.y * dt;
       ball.position.z += ball.velocity.z * dt;
 
-      handleShell(ball);
+      // Wall friction transfers drum rotation to ball tangentially
+      handleShell(ball, drumAngVel);
 
       if (ball.position.y < -1.4) {
         ball.velocity.z += -ball.position.z * 0.55 * dt;
