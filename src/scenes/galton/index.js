@@ -249,7 +249,6 @@ export function createGaltonBoard(deps) {
   function spawnBall() {
     const physics = state.physics;
     if (!physics || physics.spawned >= physics.total) return;
-    const params = currentParams();
     const biasP = state.active.biasP ?? 0.5;
 
     const drift = state.active.physicsMode === "biased"

@@ -1,6 +1,17 @@
 {
+  "type": "module",
+  "scripts": {
+    "lint": "eslint src main.js",
+    "test": "vitest run"
+  },
   "dependencies": {
     "planck": "1.0.6",
     "three": "^0.184.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.28.0",
+    "eslint": "^9.28.0",
+    "globals": "^16.2.0",
+    "vitest": "^3.2.6"
   }
 }

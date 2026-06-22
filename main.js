@@ -3,7 +3,6 @@ import { createCoinDiceScene } from "./src/scenes/coin-dice/index.js";
 import { createBingoMachineScene } from "./src/scenes/bingo-machine/index.js";
 import { simulateRareBingo } from "./src/core/rare.js";
 import {
-  SCALE,
   toW,
   toS,
   clamp,

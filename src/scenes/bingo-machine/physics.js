@@ -1,7 +1,3 @@
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-
 function length3(x, y, z) {
   return Math.hypot(x, y, z);
 }
