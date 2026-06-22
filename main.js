@@ -982,7 +982,9 @@ function resetPhysics() {
   // Pegs
   for (let row = 0; row < params.steps; row += 1) {
     const py = board.topY + row * pegGapY;
-    const count = row + 1;
+    // Keep the existing guard rails, but widen the peg pyramid by one column
+    // on each side so the visible outer contour follows the rails more closely.
+    const count = row + 3;
     const rowWidth = (count - 1) * pegGapX;
     for (let i = 0; i < count; i += 1) {
       const px = board.centerX - rowWidth / 2 + i * pegGapX;
