@@ -10,6 +10,18 @@ function shuffle(values) {
   return values;
 }
 
+function disposeMesh(mesh) {
+  if (mesh.parent) {
+    mesh.parent.remove(mesh);
+  }
+  mesh.geometry.dispose();
+  if (Array.isArray(mesh.material)) {
+    mesh.material.forEach((material) => material.dispose());
+  } else {
+    mesh.material.dispose();
+  }
+}
+
 function makeBallMesh(THREE, success) {
   const material = new THREE.MeshStandardMaterial({
     color: success ? 0xff6a57 : 0xf2f4f7,
@@ -20,6 +32,14 @@ function makeBallMesh(THREE, success) {
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   return mesh;
+}
+
+function syncBallMesh(ball) {
+  if (!ball.rb || ball.removed) return;
+  const p = ball.rb.translation();
+  const r = ball.rb.rotation();
+  ball.mesh.position.set(p.x, p.y, p.z);
+  ball.mesh.quaternion.set(r.x, r.y, r.z, r.w);
 }
 
 export function createBingoMachineScene({ canvas, state }) {
@@ -102,11 +122,10 @@ export function createBingoMachineScene({ canvas, state }) {
   scene.add(fill);
 
   const physics = createBingoPhysics({
-    cageRadius: 3.1,
     ballRadius: 0.22,
-    releaseY: -2.2,
-    releaseZ: 0.55,
-    releaseX: 0.95,
+    chamberHalfWidth: 2.75,
+    chamberHalfHeight: 2.0,
+    chamberHalfDepth: 1.75,
   });
 
   const runtimeState = {
@@ -123,28 +142,19 @@ export function createBingoMachineScene({ canvas, state }) {
   };
 
   function clearCurrentTrial() {
+    const disposed = new Set();
     if (runtimeState.currentTrial) {
       runtimeState.currentTrial.balls.forEach((ball) => {
-        if (ball.mesh.parent) {
-          ball.mesh.parent.remove(ball.mesh);
-        }
-        ball.mesh.geometry.dispose();
-        if (Array.isArray(ball.mesh.material)) {
-          ball.mesh.material.forEach((material) => material.dispose());
-        } else {
-          ball.mesh.material.dispose();
-        }
+        if (disposed.has(ball.mesh)) return;
+        disposed.add(ball.mesh);
+        disposeMesh(ball.mesh);
       });
     }
     physics.clear();
     runtimeState.escapedBalls.forEach((ball) => {
-      scene.remove(ball.mesh);
-      ball.mesh.geometry.dispose();
-      if (Array.isArray(ball.mesh.material)) {
-        ball.mesh.material.forEach((material) => material.dispose());
-      } else {
-        ball.mesh.material.dispose();
-      }
+      if (disposed.has(ball.mesh)) return;
+      disposed.add(ball.mesh);
+      disposeMesh(ball.mesh);
     });
     runtimeState.escapedBalls = [];
   }
@@ -170,37 +180,42 @@ export function createBingoMachineScene({ canvas, state }) {
     };
   }
 
+  function addBallToTrial(trial, success, position) {
+    const mesh = makeBallMesh(THREE, success);
+    mesh.position.copy(position);
+    mesh.rotation.set(
+      Math.random() * Math.PI,
+      Math.random() * Math.PI,
+      Math.random() * Math.PI,
+    );
+    boardGroup.add(mesh);
+
+    const ball = {
+      success,
+      mesh,
+      radius: 0.22,
+      released: false,
+      removed: false,
+      rb: null,
+      collider: null,
+    };
+    trial.balls.push(ball);
+    physics.addBall(ball);
+  }
+
   function populateTrial(trial) {
     clearCurrentTrial();
+
     const ballCount = trial.values.length;
-    const radius = 2.55;
+    const radius = 2.25;
     for (let i = 0; i < ballCount; i += 1) {
       const success = !!trial.values[i];
-      const mesh = makeBallMesh(THREE, success);
       const theta = Math.random() * Math.PI * 2;
       const rr = Math.sqrt(Math.random()) * radius;
       const x = Math.cos(theta) * rr;
-      const y = (Math.random() - 0.5) * 4.8;
+      const y = -1.25 + Math.random() * 2.7;
       const z = Math.sin(theta) * rr;
-      mesh.position.set(x, y, z);
-      mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
-      boardGroup.add(mesh);
-
-      const body = {
-        success,
-        mesh,
-        position: mesh.position,
-        velocity: new THREE.Vector3(
-          (Math.random() - 0.5) * 0.4,
-          (Math.random() - 0.5) * 0.4,
-          (Math.random() - 0.5) * 0.4,
-        ),
-        radius: 0.22,
-        mass: 1,
-        released: false,
-      };
-      trial.balls.push(body);
-      physics.addBall(body);
+      addBallToTrial(trial, success, new THREE.Vector3(x, y, z));
     }
   }
 
@@ -214,30 +229,47 @@ export function createBingoMachineScene({ canvas, state }) {
   }
 
   function promoteReleasedBall(ball) {
-    // Ball is already in boardGroup (world space) — just move to scene for settling
-    const pos = ball.mesh.position.clone();
-    ball.mesh.parent.remove(ball.mesh);
+    if (!ball.rb) return;
+    const p = ball.rb.translation();
+    const r = ball.rb.rotation();
+    const v = ball.rb.linvel();
+    ball.mesh.position.set(p.x, p.y, p.z);
+    ball.mesh.quaternion.set(r.x, r.y, r.z, r.w);
+    boardGroup.remove(ball.mesh);
     scene.add(ball.mesh);
-    ball.mesh.position.copy(pos);
     runtimeState.escapedBalls.push({
       mesh: ball.mesh,
-      velocity: ball.velocity.clone().multiplyScalar(0.65).add(new THREE.Vector3((Math.random() - 0.5) * 0.25, -0.22, (Math.random() - 0.5) * 0.25)),
+      velocity: new THREE.Vector3(v.x, v.y, v.z).multiplyScalar(0.65).add(
+        new THREE.Vector3((Math.random() - 0.5) * 0.25, -0.22, (Math.random() - 0.5) * 0.25),
+      ),
     });
+    physics.removeBall(ball);
   }
 
   function returnBallToDrum(ball) {
     const theta = Math.random() * Math.PI * 2;
     const rr = Math.random() * 0.8;
-    ball.position.set(
+    const position = new THREE.Vector3(
       Math.cos(theta) * rr,
       1.6 + Math.random() * 0.8,
       Math.sin(theta) * rr,
     );
-    ball.velocity.set(
+    const velocity = new THREE.Vector3(
       (Math.random() - 0.5) * 0.4,
       -(0.3 + Math.random() * 0.4),
       (Math.random() - 0.5) * 0.4,
     );
+    const angularVelocity = new THREE.Vector3(
+      (Math.random() - 0.5) * 2.0,
+      (Math.random() - 0.5) * 2.0,
+      (Math.random() - 0.5) * 2.0,
+    );
+    physics.recycleBall(ball, position);
+    if (ball.rb) {
+      ball.rb.setLinvel({ x: velocity.x, y: velocity.y, z: velocity.z }, true);
+      ball.rb.setAngvel({ x: angularVelocity.x, y: angularVelocity.y, z: angularVelocity.z }, true);
+    }
+    ball.mesh.position.copy(position);
     ball.released = false;
   }
 
@@ -266,6 +298,8 @@ export function createBingoMachineScene({ canvas, state }) {
     runtimeState.trialIndex = 0;
     runtimeState.escapedBalls = [];
     runtimeState.spinSpeed = 1.0;
+    drum.rotation.set(0, 0, 0);
+    ring.rotation.x = Math.PI / 2;
 
     const population = Math.max(1, state.params.population || 1);
     const successes = Math.max(0, Math.min(population, state.params.successes || 0));
@@ -306,13 +340,7 @@ export function createBingoMachineScene({ canvas, state }) {
       ball.mesh.rotation.x += dt * 1.2;
       ball.mesh.rotation.y += dt * 1.6;
       if (ball.mesh.position.y < -8.0) {
-        scene.remove(ball.mesh);
-        ball.mesh.geometry.dispose();
-        if (Array.isArray(ball.mesh.material)) {
-          ball.mesh.material.forEach((material) => material.dispose());
-        } else {
-          ball.mesh.material.dispose();
-        }
+        disposeMesh(ball.mesh);
         ball.dead = true;
       }
     });
@@ -325,7 +353,7 @@ export function createBingoMachineScene({ canvas, state }) {
     const substeps = runtimeState.withReplacement ? 4 : 1;
     const dt = dtMs / 1000 / substeps;
 
-    for (let s = 0; s < substeps; s++) {
+    for (let s = 0; s < substeps; s += 1) {
       drum.rotation.x += runtimeState.spinSpeed * dt;
       ring.rotation.z += dt * 0.35;
 
@@ -333,7 +361,8 @@ export function createBingoMachineScene({ canvas, state }) {
       if (!trial || trial.finished) break;
 
       const remainingDraws = Math.max(0, trial.draws - trial.drawsDone);
-      const released = physics.step(dt, drum.rotation.x, runtimeState.spinSpeed, Math.min(1, remainingDraws));
+      const released = physics.step(dt * 1000, drum.rotation.x, runtimeState.spinSpeed, remainingDraws);
+
       released.forEach((ball) => {
         if (trial.finished) return;
         trial.drawsDone += 1;
@@ -342,6 +371,12 @@ export function createBingoMachineScene({ canvas, state }) {
           returnBallToDrum(ball);
         } else {
           promoteReleasedBall(ball);
+        }
+      });
+
+      trial.balls.forEach((ball) => {
+        if (ball.rb && !ball.removed && ball.mesh.parent === boardGroup) {
+          syncBallMesh(ball);
         }
       });
 

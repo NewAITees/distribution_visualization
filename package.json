@@ -5,6 +5,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.19.3",
     "planck": "1.0.6",
     "three": "^0.184.0"
   },

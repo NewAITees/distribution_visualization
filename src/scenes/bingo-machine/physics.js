@@ -1,197 +1,267 @@
-function length3(x, y, z) {
-  return Math.hypot(x, y, z);
+const rapierModule = await import("../../../node_modules/@dimforge/rapier3d-compat/rapier.mjs");
+const RAPIER = rapierModule.default ?? rapierModule;
+
+await RAPIER.init({});
+
+function vec3(x, y, z) {
+  return { x, y, z };
 }
 
-function normalize3(x, y, z) {
-  const len = Math.hypot(x, y, z) || 1;
-  return [x / len, y / len, z / len];
+function quatFromAxisAngle(x, y, z, angle) {
+  const half = angle * 0.5;
+  const s = Math.sin(half);
+  return { x: x * s, y: y * s, z: z * s, w: Math.cos(half) };
+}
+
+function createCollider(world, body, desc) {
+  return world.createCollider(desc, body);
 }
 
 export function createBingoPhysics({
-  cageRadius = 2.95,
   ballRadius = 0.22,
-  restitution = 0.62,
-  tangentialFriction = 0.28,
-  releaseY = -2.18,
-  releaseZ = 0.42,
-  releaseX = 0.9,
-}) {
-  const balls = [];
-  let gateCooldown = 0;
+  chamberHalfWidth = 2.75,
+  chamberHalfHeight = 2.0,
+  chamberHalfDepth = 1.75,
+} = {}) {
+  const world = new RAPIER.World(vec3(0, -9.81, 0));
+  world.integrationParameters.dt = 1 / 60;
+  world.integrationParameters.numSolverIterations = 8;
+  world.integrationParameters.numAdditionalFrictionIterations = 4;
 
-  function addBall(ball) {
-    balls.push(ball);
+  const eventQueue = new RAPIER.EventQueue(true);
+  const balls = new Set();
+  const colliderToBall = new Map();
+
+  const machine = {
+    elapsed: 0,
+    gateBody: null,
+    sensorHandle: null,
+    paddles: [],
+  };
+
+  function addFixedBox(pos, size, options = {}) {
+    const body = world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed().setTranslation(pos[0], pos[1], pos[2]),
+    );
+    const collider = createCollider(
+      world,
+      body,
+      RAPIER.ColliderDesc.cuboid(size[0] / 2, size[1] / 2, size[2] / 2)
+        .setFriction(options.friction ?? 0.8)
+        .setRestitution(options.restitution ?? 0.05)
+        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
+    );
+    return { body, collider };
   }
 
-  function resolveSphereCollision(a, b) {
-    const dx = b.position.x - a.position.x;
-    const dy = b.position.y - a.position.y;
-    const dz = b.position.z - a.position.z;
-    const dist = length3(dx, dy, dz);
-    const minDist = (a.radius || ballRadius) + (b.radius || ballRadius);
-    if (!dist || dist >= minDist) return;
-
-    const overlap = minDist - dist;
-    const nx = dx / dist;
-    const ny = dy / dist;
-    const nz = dz / dist;
-
-    a.position.x -= nx * overlap * 0.5;
-    a.position.y -= ny * overlap * 0.5;
-    a.position.z -= nz * overlap * 0.5;
-    b.position.x += nx * overlap * 0.5;
-    b.position.y += ny * overlap * 0.5;
-    b.position.z += nz * overlap * 0.5;
-
-    const rvx = b.velocity.x - a.velocity.x;
-    const rvy = b.velocity.y - a.velocity.y;
-    const rvz = b.velocity.z - a.velocity.z;
-    const sep = rvx * nx + rvy * ny + rvz * nz;
-    if (sep > 0) return;
-
-    const invMassA = 1 / Math.max(a.mass || 1, 1e-6);
-    const invMassB = 1 / Math.max(b.mass || 1, 1e-6);
-    const impulse = -(1 + restitution) * sep / (invMassA + invMassB);
-
-    a.velocity.x -= impulse * invMassA * nx;
-    a.velocity.y -= impulse * invMassA * ny;
-    a.velocity.z -= impulse * invMassA * nz;
-    b.velocity.x += impulse * invMassB * nx;
-    b.velocity.y += impulse * invMassB * ny;
-    b.velocity.z += impulse * invMassB * nz;
+  function addKinematicBox(pos, size, options = {}) {
+    const body = world.createRigidBody(
+      RAPIER.RigidBodyDesc.kinematicPositionBased().setTranslation(pos[0], pos[1], pos[2]),
+    );
+    const collider = createCollider(
+      world,
+      body,
+      RAPIER.ColliderDesc.cuboid(size[0] / 2, size[1] / 2, size[2] / 2)
+        .setFriction(options.friction ?? 0.9)
+        .setRestitution(options.restitution ?? 0.04)
+        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
+    );
+    return { body, collider };
   }
 
-  function handleShell(ball, drumAngVel) {
-    const px = ball.position.x;
-    const py = ball.position.y;
-    const pz = ball.position.z;
-    const radial = length3(px, py, pz);
-    const limit = cageRadius - (ball.radius || ballRadius);
-    if (radial <= limit) return;
-
-    const [nx, ny, nz] = normalize3(px, py, pz);
-    ball.position.x = nx * limit;
-    ball.position.y = ny * limit;
-    ball.position.z = nz * limit;
-
-    const vn = ball.velocity.x * nx + ball.velocity.y * ny + ball.velocity.z * nz;
-    if (vn > 0) return;
-
-    // Normal restitution impulse
-    ball.velocity.x -= (1 + restitution) * vn * nx;
-    ball.velocity.y -= (1 + restitution) * vn * ny;
-    ball.velocity.z -= (1 + restitution) * vn * nz;
-
-    // Wall tangential velocity: ω × contact_point
-    // ω = (drumAngVel, 0, 0)  →  (ω,0,0)×(px,py,pz) = (0, -ω*pz, ω*py)
-    const wallVy = -drumAngVel * pz;
-    const wallVz = drumAngVel * py;
-
-    // Relative velocity of ball with respect to wall
-    const relvx = ball.velocity.x;
-    const relvy = ball.velocity.y - wallVy;
-    const relvz = ball.velocity.z - wallVz;
-
-    // Strip normal component → tangential only
-    const relvn = relvx * nx + relvy * ny + relvz * nz;
-    const reltx = relvx - relvn * nx;
-    const relty = relvy - relvn * ny;
-    const reltz = relvz - relvn * nz;
-
-    // Transfer tangential velocity from wall to ball (friction impulse)
-    ball.velocity.x -= reltx * tangentialFriction;
-    ball.velocity.y -= relty * tangentialFriction;
-    ball.velocity.z -= reltz * tangentialFriction;
-  }
-
-  function scoreReleaseCandidate(ball) {
-    // World-space: pick the lowest ball (most negative Y)
-    return ball.position.y;
-  }
-
-  function step(dt, drumAngle, drumAngVel, releaseLimit = 1) {
-    gateCooldown = Math.max(0, gateCooldown - dt);
-
-    // World-space gravity (balls live in world space, not drum-local)
-    const gY = -9.4;
-    const gZ = 0;
-    // Gate opens when drum outlet faces downward (cos > 0 ensures angle near 0, not π)
-    const releaseWindowOpen = gateCooldown <= 0 && Math.abs(Math.sin(drumAngle)) < 0.22 && Math.cos(drumAngle) > 0;
-    const released = [];
-    let remainingReleases = Math.max(0, releaseLimit);
-
-    balls.forEach((ball) => {
-      if (ball.released) return;
-
-      ball.velocity.y += gY * dt;
-      ball.velocity.z += gZ * dt;
-
-      // Gentle damping to prevent runaway energy accumulation
-      ball.velocity.x *= 0.999;
-      ball.velocity.y *= 0.999;
-      ball.velocity.z *= 0.999;
-
-      ball.position.x += ball.velocity.x * dt;
-      ball.position.y += ball.velocity.y * dt;
-      ball.position.z += ball.velocity.z * dt;
-
-      // Wall friction transfers drum rotation to ball tangentially
-      handleShell(ball, drumAngVel);
-
-      if (ball.position.y < -1.4) {
-        ball.velocity.z += -ball.position.z * 0.55 * dt;
-        ball.velocity.y += (-ball.position.y - 1.4) * 0.45 * dt;
-      }
+  function buildMachine() {
+    addFixedBox([-chamberHalfWidth, chamberHalfHeight, 0], [0.18, chamberHalfHeight * 2, chamberHalfDepth * 2], {
+      friction: 0.75,
+    });
+    addFixedBox([chamberHalfWidth, chamberHalfHeight, 0], [0.18, chamberHalfHeight * 2, chamberHalfDepth * 2], {
+      friction: 0.75,
+    });
+    addFixedBox([0, chamberHalfHeight, -chamberHalfDepth], [chamberHalfWidth * 2, chamberHalfHeight * 2, 0.18], {
+      friction: 0.75,
+    });
+    addFixedBox([0, chamberHalfHeight, chamberHalfDepth], [chamberHalfWidth * 2, chamberHalfHeight * 2, 0.18], {
+      friction: 0.75,
+    });
+    addFixedBox([0, chamberHalfHeight * 2.05, 0], [chamberHalfWidth * 2, 0.18, chamberHalfDepth * 2], {
+      friction: 0.75,
     });
 
-    for (let i = 0; i < balls.length; i += 1) {
-      const a = balls[i];
-      if (a.released) continue;
-      for (let j = i + 1; j < balls.length; j += 1) {
-        const b = balls[j];
-        if (b.released) continue;
-        resolveSphereCollision(a, b);
-      }
-    }
+    // Floor leaves a centered hole for the outlet gate.
+    addFixedBox([-1.55, -0.05, 0], [2.9, 0.16, chamberHalfDepth * 2], { friction: 0.85 });
+    addFixedBox([1.55, -0.05, 0], [2.9, 0.16, chamberHalfDepth * 2], { friction: 0.85 });
+    addFixedBox([0, -0.05, -1.15], [0.7, 0.16, 1.2], { friction: 0.85 });
+    addFixedBox([0, -0.05, 1.15], [0.7, 0.16, 1.2], { friction: 0.85 });
 
-    if (releaseWindowOpen && remainingReleases > 0) {
-      let bestBall = null;
-      let bestScore = Infinity;
-      for (let i = 0; i < balls.length; i += 1) {
-        const ball = balls[i];
-        if (ball.released) continue;
-        // World-space: just check ball is near the bottom of the cage
-        if (ball.position.y > releaseY + 0.2) continue;
-        const score = scoreReleaseCandidate(ball);
-        if (score < bestScore) {
-          bestScore = score;
-          bestBall = ball;
-        }
-      }
+    const gate = addKinematicBox([0, 0.08, 0], [0.82, 0.26, 0.82], { friction: 1.0 });
+    machine.gateBody = gate.body;
 
-      if (bestBall) {
-        bestBall.released = true;
-        bestBall.velocity.x += Math.sign(bestBall.position.x - releaseX) * 0.35;
-        bestBall.velocity.y += -1.7;
-        bestBall.velocity.z += Math.sign(bestBall.position.z - releaseZ) * 0.28;
-        released.push(bestBall);
-        gateCooldown = 0.18;
-        remainingReleases -= 1;
-      }
+    const sensorBody = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -0.45, 0));
+    const sensor = createCollider(
+      world,
+      sensorBody,
+      RAPIER.ColliderDesc.cuboid(0.55, 0.25, 0.55)
+        .setSensor(true)
+        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
+    );
+    machine.sensorHandle = sensor.handle;
+
+    machine.paddles.push({
+      body: addKinematicBox([0, 1.55, 0], [4.35, 0.14, 0.28], { friction: 0.7 }).body,
+      mode: "rollZ",
+      phase: 0,
+    });
+    machine.paddles.push({
+      body: addKinematicBox([0, 2.45, 0], [0.28, 0.14, 2.55], { friction: 0.7 }).body,
+      mode: "rollY",
+      phase: Math.PI / 2,
+    });
+    machine.paddles.push({
+      body: addKinematicBox([0, 0.42, 0], [4.75, 0.18, 0.2], { friction: 0.7 }).body,
+      mode: "sweepY",
+      phase: Math.PI / 5,
+    });
+  }
+
+  buildMachine();
+
+  function addBall(ball, initialPosition = null) {
+    const position = initialPosition ?? ball.mesh.position;
+    const rb = world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(position.x, position.y, position.z)
+        .setLinearDamping(0.22)
+        .setAngularDamping(0.12),
+    );
+    rb.enableCcd(true);
+
+    const collider = createCollider(
+      world,
+      rb,
+      RAPIER.ColliderDesc.ball(ball.radius ?? ballRadius)
+        .setDensity(1.2)
+        .setFriction(0.65)
+        .setRestitution(0.16)
+        .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
+    );
+
+    ball.rb = rb;
+    ball.collider = collider;
+    ball.released = false;
+    ball.removed = false;
+    balls.add(ball);
+    colliderToBall.set(collider.handle, ball);
+    return ball;
+  }
+
+  function setBallState(ball, position, linearVelocity, angularVelocity) {
+    if (!ball.rb || ball.removed) return;
+    ball.rb.setTranslation(vec3(position.x, position.y, position.z), true);
+    ball.rb.setLinvel(vec3(linearVelocity.x, linearVelocity.y, linearVelocity.z), true);
+    ball.rb.setAngvel(vec3(angularVelocity.x, angularVelocity.y, angularVelocity.z), true);
+    ball.released = false;
+  }
+
+  function recycleBall(ball, center = null) {
+    const base = center ?? {
+      x: (Math.random() - 0.5) * 1.4,
+      y: 1.6 + Math.random() * 0.8,
+      z: (Math.random() - 0.5) * 1.0,
+    };
+    setBallState(
+      ball,
+      base,
+      {
+        x: (Math.random() - 0.5) * 0.5,
+        y: -(0.2 + Math.random() * 0.45),
+        z: (Math.random() - 0.5) * 0.5,
+      },
+      {
+        x: (Math.random() - 0.5) * 2.2,
+        y: (Math.random() - 0.5) * 2.2,
+        z: (Math.random() - 0.5) * 2.2,
+      },
+    );
+  }
+
+  function removeBall(ball) {
+    if (!ball.rb || ball.removed) return;
+    colliderToBall.delete(ball.collider?.handle);
+    world.removeRigidBody(ball.rb);
+    ball.rb = null;
+    ball.collider = null;
+    ball.removed = true;
+    balls.delete(ball);
+  }
+
+  function clear() {
+    for (const ball of balls) {
+      removeBall(ball);
     }
+    balls.clear();
+    colliderToBall.clear();
+    machine.elapsed = 0;
+  }
+
+  function updatePaddles(drumAngle, spinSpeed) {
+    const speed = 1.45 + Math.max(0, spinSpeed) * 0.1;
+    for (const paddle of machine.paddles) {
+      const angle = drumAngle * speed + paddle.phase;
+      let rotation;
+      if (paddle.mode === "rollZ") {
+        rotation = quatFromAxisAngle(0, 0, 1, angle);
+      } else if (paddle.mode === "rollY") {
+        rotation = quatFromAxisAngle(0, 1, 0, -angle * 1.35);
+      } else {
+        rotation = quatFromAxisAngle(0, 1, 0, angle * 1.8);
+      }
+      paddle.body.setNextKinematicRotation(rotation);
+    }
+  }
+
+  function updateGate(remainingDraws) {
+    const cycle = 1.25;
+    const openWindow = 0.42;
+    const open = remainingDraws > 0 && machine.elapsed % cycle < openWindow;
+    machine.gateBody.setNextKinematicTranslation(open ? vec3(0, -1.4, 0) : vec3(0, 0.08, 0));
+  }
+
+  function step(dtMs, drumAngle, spinSpeed, remainingDraws = 1) {
+    const dt = Math.max(1 / 240, Math.min(dtMs / 1000, 1 / 24));
+    machine.elapsed += dt;
+    world.integrationParameters.dt = dt;
+
+    updatePaddles(drumAngle, spinSpeed);
+    updateGate(remainingDraws);
+    world.step(eventQueue);
+
+    const released = [];
+    eventQueue.drainCollisionEvents((h1, h2, started) => {
+      if (!started) return;
+      let ball = null;
+      if (h1 === machine.sensorHandle) {
+        ball = colliderToBall.get(h2) ?? null;
+      } else if (h2 === machine.sensorHandle) {
+        ball = colliderToBall.get(h1) ?? null;
+      }
+      if (!ball || ball.released || ball.removed) return;
+      ball.released = true;
+      released.push(ball);
+    });
 
     return released;
   }
 
-  function clear() {
-    balls.length = 0;
-    gateCooldown = 0;
-  }
-
   return {
-    balls,
     addBall,
+    recycleBall,
+    removeBall,
     clear,
     step,
+    get world() {
+      return world;
+    },
+    get balls() {
+      return balls;
+    },
   };
 }
