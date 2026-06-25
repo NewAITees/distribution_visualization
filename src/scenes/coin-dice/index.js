@@ -1,6 +1,113 @@
 import { createThreeRuntime, createThreeRenderer } from "../../three/runtime.js";
 import { binomialPmf, normalizeWeights } from "../../core/math.js";
 
+const rapierModule = await import("../../../node_modules/@dimforge/rapier3d-compat/rapier.mjs");
+const RAPIER = rapierModule.default ?? rapierModule;
+await RAPIER.init({});
+
+function rotateVec(q, v) {
+  const { x: qx, y: qy, z: qz, w: qw } = q;
+  const [vx, vy, vz] = v;
+  const tx = 2 * (qy * vz - qz * vy);
+  const ty = 2 * (qz * vx - qx * vz);
+  const tz = 2 * (qx * vy - qy * vx);
+  return [vx + qw * tx + qy * tz - qz * ty, vy + qw * ty + qz * tx - qx * tz, vz + qw * tz + qx * ty - qy * tx];
+}
+
+function randomUnitQuat() {
+  const u1 = Math.random(), u2 = Math.random(), u3 = Math.random();
+  const sq1 = Math.sqrt(1 - u1), sq2 = Math.sqrt(u1);
+  return { x: sq1 * Math.sin(2 * Math.PI * u2), y: sq1 * Math.cos(2 * Math.PI * u2), z: sq2 * Math.sin(2 * Math.PI * u3), w: sq2 * Math.cos(2 * Math.PI * u3) };
+}
+
+function isSettled(rb) {
+  const lv = rb.linvel(), av = rb.angvel();
+  return (lv.x ** 2 + lv.y ** 2 + lv.z ** 2) < 0.1 ** 2 && (av.x ** 2 + av.y ** 2 + av.z ** 2) < 0.4 ** 2;
+}
+
+const FACE_NORMALS = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+
+function getCoinResult(rb) {
+  const [, wy] = rotateVec(rb.rotation(), [0, 1, 0]);
+  return wy > 0 ? 1 : 0;
+}
+
+function getDieResult(rb, sides) {
+  if (sides !== 6) return Math.floor(Math.random() * sides);
+  const q = rb.rotation();
+  let maxDot = -Infinity, result = 0;
+  for (let i = 0; i < FACE_NORMALS.length; i++) {
+    const [, wy] = rotateVec(q, FACE_NORMALS[i]);
+    if (wy > maxDot) { maxDot = wy; result = i; }
+  }
+  return result;
+}
+
+function createPhysicsWorld(mode, sides, startX, startZ) {
+  const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+  world.integrationParameters.dt = 1 / 60;
+  world.integrationParameters.numSolverIterations = 8;
+
+  // Floor surface at y=-2.7 (matches Three.js visual floor)
+  const floorRb = world.createRigidBody(RAPIER.RigidBodyDesc.fixed().setTranslation(0, -2.75, 0));
+  world.createCollider(RAPIER.ColliderDesc.cuboid(8, 0.05, 8).setFriction(0.65).setRestitution(0.22), floorRb);
+
+  let colliderDesc;
+  let angDamp, angScale;
+  if (mode === "dice") {
+    if (sides === 6) {
+      colliderDesc = RAPIER.ColliderDesc.cuboid(0.6, 0.6, 0.6).setFriction(0.7).setRestitution(0.18).setDensity(1.5);
+      angDamp = 0.6;
+      angScale = 12;
+    } else {
+      colliderDesc = RAPIER.ColliderDesc.cylinder(0.6, 0.8).setFriction(0.65).setRestitution(0.18).setDensity(1.5);
+      angDamp = 0.5;
+      angScale = 10;
+    }
+  } else {
+    // Coin: cylinder matching CylinderGeometry(1.0, 1.0, 0.18)
+    colliderDesc = RAPIER.ColliderDesc.cylinder(0.09, 1.0).setFriction(0.6).setRestitution(0.18).setDensity(6.0);
+    angDamp = 0.8;
+    angScale = 20;
+  }
+
+  // Octagonal containment walls (invisible — physics only)
+  const WALL_R = 3.5;
+  const WALL_PANELS = 8;
+  const WALL_CENTER_Y = 3.4; // midpoint between spawn (9.5) and floor (-2.7)
+  const WALL_HALF_H = 6.2;
+  const WALL_HALF_W = WALL_R * Math.tan(Math.PI / WALL_PANELS) + 0.1;
+  for (let i = 0; i < WALL_PANELS; i++) {
+    const angle = (i / WALL_PANELS) * Math.PI * 2;
+    const wx = WALL_R * Math.cos(angle);
+    const wz = WALL_R * Math.sin(angle);
+    const half = angle / 2;
+    const wallBody = world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed()
+        .setTranslation(wx, WALL_CENTER_Y, wz)
+        .setRotation({ x: 0, y: Math.sin(half), z: 0, w: Math.cos(half) }),
+    );
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(0.08, WALL_HALF_H, WALL_HALF_W).setFriction(0.25).setRestitution(0.5),
+      wallBody,
+    );
+  }
+
+  const rb = world.createRigidBody(
+    RAPIER.RigidBodyDesc.dynamic()
+      .setTranslation(startX, 9.5, startZ)
+      .setLinearDamping(0.05)
+      .setAngularDamping(angDamp),
+  );
+  world.createCollider(colliderDesc, rb);
+  rb.setRotation(randomUnitQuat(), true);
+  // Minimal Y-spin so flat coins don't spin invisibly forever
+  rb.setLinvel({ x: (Math.random() - 0.5) * 1.5, y: -1.0, z: (Math.random() - 0.5) * 1.5 }, true);
+  rb.setAngvel({ x: (Math.random() - 0.5) * angScale, y: (Math.random() - 0.5) * angScale * 0.15, z: (Math.random() - 0.5) * angScale }, true);
+
+  return { world, rb };
+}
+
 export function createCoinDiceScene({ canvas, state }) {
   const runtime = createThreeRuntime();
   const { THREE, scene, camera, boardGroup } = runtime;
@@ -65,27 +172,24 @@ export function createCoinDiceScene({ canvas, state }) {
       const toss = tosses.pop();
       boardGroup.remove(toss.mesh);
       toss.mesh.geometry.dispose();
-      toss.mesh.material.forEach?.((m) => m.dispose?.());
-      if (toss.mesh.material.dispose) toss.mesh.material.dispose();
+      const mats = Array.isArray(toss.mesh.material) ? toss.mesh.material : [toss.mesh.material];
+      for (const m of mats) { m.map?.dispose(); m.dispose(); }
+      if (typeof toss.rapierWorld?.free === "function") toss.rapierWorld.free();
     }
     runtimeState.active = null;
   }
 
   function setKind(kind) {
     runtimeState.mode = kind;
-    if (kind === "walk") {
-      camera.position.set(0, 5.1, 15);
-    } else {
-      camera.position.set(0, 4.8, 13.5);
-    }
-    camera.lookAt(0, 0, 0);
+    camera.position.set(0, 6.0, 17);
+    camera.lookAt(0, 1.5, 0);
   }
 
   function buildCoinMesh() {
     const materials = [
       new THREE.MeshStandardMaterial({ color: 0xf5d36f, roughness: 0.3, metalness: 0.6 }),
-      new THREE.MeshStandardMaterial({ color: 0xb78120, roughness: 0.45, metalness: 0.7 }),
-      new THREE.MeshStandardMaterial({ color: 0xf1c24e, roughness: 0.3, metalness: 0.7 }),
+      new THREE.MeshStandardMaterial({ color: 0xffd700, roughness: 0.18, metalness: 0.88, emissive: 0x332200, emissiveIntensity: 0.18 }), // 表: 明るい金
+      new THREE.MeshStandardMaterial({ color: 0xc8c8d4, roughness: 0.22, metalness: 0.92 }), // 裏: シルバー
     ];
     const mesh = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, 0.18, 40), materials);
     mesh.castShadow = true;
@@ -93,34 +197,48 @@ export function createCoinDiceScene({ canvas, state }) {
     return mesh;
   }
 
-  function buildDiceMesh(sides) {
-    const material = new THREE.MeshStandardMaterial({
-      color: 0xf6f2ea,
-      roughness: 0.65,
-      metalness: 0.02,
-    });
-    const geometry = sides === 10
-      ? new THREE.CylinderGeometry(1.0, 1.0, 1.2, 10, 1, false)
-      : new THREE.BoxGeometry(1.2, 1.2, 1.2);
-    const mesh = new THREE.Mesh(geometry, material);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    return mesh;
+  function makePipTexture(value) {
+    const S = 128;
+    const canvas = document.createElement("canvas");
+    canvas.width = S; canvas.height = S;
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "#f5f0e8";
+    ctx.beginPath();
+    ctx.roundRect(4, 4, S - 8, S - 8, 14);
+    ctx.fill();
+    ctx.fillStyle = "#1a1a2e";
+    const pips = {
+      1: [[0.5, 0.5]],
+      2: [[0.3, 0.3], [0.7, 0.7]],
+      3: [[0.3, 0.3], [0.5, 0.5], [0.7, 0.7]],
+      4: [[0.3, 0.3], [0.7, 0.3], [0.3, 0.7], [0.7, 0.7]],
+      5: [[0.3, 0.3], [0.7, 0.3], [0.5, 0.5], [0.3, 0.7], [0.7, 0.7]],
+      6: [[0.3, 0.25], [0.7, 0.25], [0.3, 0.5], [0.7, 0.5], [0.3, 0.75], [0.7, 0.75]],
+    }[value] ?? [[0.5, 0.5]];
+    for (const [px, py] of pips) {
+      ctx.beginPath();
+      ctx.arc(px * S, py * S, S * 0.095, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    return new THREE.CanvasTexture(canvas);
   }
 
-  function dieTopRotation(value, sides) {
+  function buildDiceMesh(sides) {
     if (sides === 10) {
-      return new THREE.Euler((value % 5) * (Math.PI / 5), ((value + 1) % 3) * (Math.PI / 2), 0);
+      const material = new THREE.MeshStandardMaterial({ color: 0xf6f2ea, roughness: 0.65, metalness: 0.02 });
+      const mesh = new THREE.Mesh(new THREE.CylinderGeometry(1.0, 1.0, 1.2, 10, 1, false), material);
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      return mesh;
     }
-    switch (value) {
-      case 1: return new THREE.Euler(0, 0, 0);
-      case 2: return new THREE.Euler(Math.PI / 2, 0, 0);
-      case 3: return new THREE.Euler(0, 0, Math.PI / 2);
-      case 4: return new THREE.Euler(0, 0, -Math.PI / 2);
-      case 5: return new THREE.Euler(-Math.PI / 2, 0, 0);
-      case 6: return new THREE.Euler(Math.PI, 0, 0);
-      default: return new THREE.Euler(0, 0, 0);
-    }
+    // BoxGeometry face order: +X(0) -X(1) +Y(2) -Y(3) +Z(4) -Z(5)
+    // Rapier FACE_NORMALS[i] maps to Three.js material[i], so result i = pip i+1
+    const faceValues = [1, 2, 3, 4, 5, 6]; // material index → pip value
+    const materials = faceValues.map((v) =>
+      new THREE.MeshStandardMaterial({ map: makePipTexture(v), roughness: 0.55, metalness: 0.04 }),
+    );
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 1.2), materials);
+    mesh.castShadow = true; mesh.receiveShadow = true;
+    return mesh;
   }
 
   function createTrial(id) {
@@ -139,7 +257,6 @@ export function createCoinDiceScene({ canvas, state }) {
       case "bernoulli":
         return 1;
       case "binom":
-      case "walk":
         return runtimeState.trialSize;
       case "geometric":
         return runtimeState.maxTries;
@@ -192,15 +309,6 @@ export function createCoinDiceScene({ canvas, state }) {
           return true;
         }
         return false;
-      case "walk":
-        trial.tosses += 1;
-        trial.successes += tossResult;
-        if (trial.tosses >= runtimeState.trialSize) {
-          trial.result = trial.successes;
-          trial.finished = true;
-          return true;
-        }
-        return false;
       default:
         trial.result = tossResult;
         trial.finished = true;
@@ -215,34 +323,28 @@ export function createCoinDiceScene({ canvas, state }) {
 
     const mode = runtimeState.mode;
     const sides = mode === "dice" ? runtimeState.sides : 2;
+    const startX = (Math.random() - 0.5) * 1.0;
+    const startZ = (Math.random() - 0.5) * 1.0;
     const mesh = mode === "dice" ? buildDiceMesh(sides) : buildCoinMesh();
-    mesh.position.set((Math.random() - 0.5) * 0.8, 5.2, (Math.random() - 0.5) * 0.8);
-    mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
     boardGroup.add(mesh);
 
-    const tossResult = mode === "dice"
-      ? Math.floor(Math.random() * sides)
-      : (Math.random() < (runtimeState.biasP ?? 0.5) ? 1 : 0);
-    const target = mode === "dice"
-      ? { rot: dieTopRotation(tossResult + 1, sides), label: tossResult }
-      : { rot: new THREE.Euler(tossResult === 1 ? 0 : Math.PI, 0, Math.random() * Math.PI * 2), label: tossResult };
+    const { world, rb } = createPhysicsWorld(mode, sides, startX, startZ);
+    // Sync initial mesh pose from Rapier body
+    const initPos = rb.translation();
+    const initQ = rb.rotation();
+    mesh.position.set(initPos.x, initPos.y, initPos.z);
+    mesh.quaternion.set(initQ.x, initQ.y, initQ.z, initQ.w);
 
     const toss = {
       mesh,
-      kind: mode,
       mode,
-      resultIndex: tossResult,
       trial,
-      target,
-      age: 0,
-      life: mode === "dice" ? 0.95 : 0.68,
-      velocity: new THREE.Vector3((Math.random() - 0.5) * 1.8, 0, (Math.random() - 0.5) * 1.8),
-      angular: new THREE.Vector3(
-        (Math.random() * 2 + 1) * (Math.random() < 0.5 ? -1 : 1),
-        (Math.random() * 2 + 1) * (Math.random() < 0.5 ? -1 : 1),
-        (Math.random() * 2 + 1) * (Math.random() < 0.5 ? -1 : 1),
-      ),
+      rapierWorld: world,
+      rapierRb: rb,
       settled: false,
+      settledAt: -1,
+      settledCount: 0,
+      age: 0,
     };
 
     tosses.push(toss);
@@ -258,8 +360,8 @@ export function createCoinDiceScene({ canvas, state }) {
     runtimeState.paused = false;
     runtimeState.mode = kind;
     runtimeState.sides = runtimeState.mode === "dice" ? Math.max(6, state.params.sides || 6) : 2;
-    runtimeState.trialSize = runtimeState.mode === "binom" || runtimeState.mode === "walk"
-      ? Math.max(1, state.params.trials || state.params.steps || 1)
+    runtimeState.trialSize = runtimeState.mode === "binom"
+      ? Math.max(1, state.params.trials || 1)
       : 1;
     runtimeState.maxTries = runtimeState.mode === "geometric" ? Math.max(1, state.params.maxTries || 1) : 1;
     runtimeState.maxFailures = runtimeState.mode === "negbinom" ? Math.max(1, state.params.maxFailures || 1) : 1;
@@ -279,7 +381,7 @@ export function createCoinDiceScene({ canvas, state }) {
       {
         length:
           runtimeState.mode === "bernoulli" ? 2
-          : runtimeState.mode === "binom" || runtimeState.mode === "walk" ? runtimeState.trialSize + 1
+          : runtimeState.mode === "binom" ? runtimeState.trialSize + 1
           : runtimeState.mode === "geometric" ? runtimeState.maxTries + 1
           : runtimeState.mode === "negbinom" ? runtimeState.maxFailures + 1
           : runtimeState.sides,
@@ -289,7 +391,7 @@ export function createCoinDiceScene({ canvas, state }) {
     state.samples = [];
     if (runtimeState.mode === "bernoulli") {
       state.theoretical = normalizeWeights([1 - runtimeState.biasP, runtimeState.biasP], state.params.samples);
-    } else if (runtimeState.mode === "binom" || runtimeState.mode === "walk") {
+    } else if (runtimeState.mode === "binom") {
       state.theoretical = normalizeWeights(
         Array.from({ length: runtimeState.trialSize + 1 }, (_, index) => binomialPmf(runtimeState.trialSize, index, runtimeState.biasP)),
         state.params.samples,
@@ -321,33 +423,23 @@ export function createCoinDiceScene({ canvas, state }) {
     state.paused = paused;
   }
 
-  function settleToss(toss) {
+  function settleToss(toss, resultIndex) {
     if (toss.settled) return;
     toss.settled = true;
-    toss.mesh.rotation.copy(toss.target.rot);
-    toss.mesh.position.y = -1.92;
+    toss.settledAt = performance.now();
     runtimeState.settled += 1;
-    boardGroup.remove(toss.mesh);
-    toss.mesh.geometry.dispose();
-    if (Array.isArray(toss.mesh.material)) {
-      toss.mesh.material.forEach((material) => material.dispose());
-    } else if (toss.mesh.material?.dispose) {
-      toss.mesh.material.dispose();
-    }
-    if (runtimeState.active === toss) {
-      runtimeState.active = null;
-    }
+    if (runtimeState.active === toss) runtimeState.active = null;
     const trial = toss.trial;
     trial.active = false;
 
-    const isDone = collectTrialResult(trial, toss.resultIndex);
+    const isDone = collectTrialResult(trial, resultIndex);
     if (isDone) {
       const bin = Math.max(0, Math.min(state.bins.length - 1, trial.result ?? 0));
       state.bins[bin] += 1;
       state.samples.push(trial.result ?? 0);
       runtimeState.completed += 1;
     } else {
-      runtimeState.queue.push(trial);
+      runtimeState.queue.unshift(trial); // re-queue at front so trial completes sequentially
     }
 
     if (runtimeState.completed >= runtimeState.total && runtimeState.queue.length === 0 && tosses.every((item) => item.settled)) {
@@ -358,37 +450,44 @@ export function createCoinDiceScene({ canvas, state }) {
   function step(dtMs) {
     if (!runtimeState.running || runtimeState.paused || runtimeState.complete) return;
 
-    runtimeState.spawnTimer += dtMs;
-    while (runtimeState.spawnTimer >= runtimeState.spawnInterval && runtimeState.queue.length) {
-      runtimeState.spawnTimer -= runtimeState.spawnInterval;
-      spawnThrow();
-    }
-
-    const dt = dtMs / 1000;
+    const SUB_STEPS = 8; // simulate 8x faster than real-time
     tosses.forEach((toss) => {
       if (toss.settled) return;
-      toss.age += dt;
-      toss.velocity.y -= 11.5 * dt;
-      toss.mesh.position.addScaledVector(toss.velocity, dt);
-      toss.mesh.rotation.x += toss.angular.x * dt;
-      toss.mesh.rotation.y += toss.angular.y * dt;
-      toss.mesh.rotation.z += toss.angular.z * dt;
-
-      if (toss.mesh.position.y <= -1.92) {
-        toss.mesh.position.y = -1.92;
-        toss.velocity.multiplyScalar(0.28);
-        toss.velocity.x *= 0.76;
-        toss.velocity.z *= 0.76;
-        toss.angular.multiplyScalar(0.65);
+      let justSettled = false;
+      for (let i = 0; i < SUB_STEPS; i++) {
+        toss.rapierWorld.step();
+        if (isSettled(toss.rapierRb)) {
+          toss.settledCount++;
+          if (toss.settledCount >= 6) { justSettled = true; break; }
+        } else {
+          toss.settledCount = 0;
+        }
       }
+      const pos = toss.rapierRb.translation();
+      const q = toss.rapierRb.rotation();
+      toss.mesh.position.set(pos.x, pos.y, pos.z);
+      toss.mesh.quaternion.set(q.x, q.y, q.z, q.w);
 
-      if (toss.age >= toss.life || (toss.mesh.position.y <= -1.92 && toss.velocity.length() < 0.55)) {
-        settleToss(toss);
+      toss.age += dtMs / 1000;
+      if (justSettled || (!toss.settled && toss.age > 8.0)) {
+        const result = toss.mode === "dice"
+          ? getDieResult(toss.rapierRb, runtimeState.sides)
+          : getCoinResult(toss.rapierRb);
+        settleToss(toss, result);
       }
     });
 
+    // settled から 300ms 経過したら削除
     for (let i = tosses.length - 1; i >= 0; i--) {
-      if (tosses[i].settled) tosses.splice(i, 1);
+      const t = tosses[i];
+      if (t.settled && performance.now() - t.settledAt > 300) {
+        boardGroup.remove(t.mesh);
+        t.mesh.geometry.dispose();
+        const mats = Array.isArray(t.mesh.material) ? t.mesh.material : [t.mesh.material];
+        for (const m of mats) { m.map?.dispose(); m.dispose(); }
+        if (typeof t.rapierWorld?.free === "function") t.rapierWorld.free();
+        tosses.splice(i, 1);
+      }
     }
 
     if (runtimeState.active == null && runtimeState.queue.length && runtimeState.running) {

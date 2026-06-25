@@ -243,37 +243,6 @@ const distributionSpecs = {
       return weights;
     },
   },
-  walk: {
-    id: "walk",
-    title: "ランダムウォーク",
-    tag: "3D coin toss",
-    shape: "終点の位置",
-    description:
-      "コインの表裏を左右の一歩に変換し、固定歩数の終点を集計する。移動の積み重ねで中心付近に集まる。",
-    evaluation: ["適切性: ◎", "見栄え: ◎", "わかりやすさ: ◎", "3D 表現: ◎"],
-    defaults: { samples: 500, steps: 20, p: 0.5 },
-    controls: [
-      { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
-      { key: "steps", label: "歩数", min: 4, max: 40, step: 1, format: (v) => `${v}` },
-      { key: "p", label: "右に進む確率 p", min: 0.05, max: 0.95, step: 0.05, format: (v) => v.toFixed(2) },
-    ],
-    binsFor(params) {
-      return params.steps + 1;
-    },
-    physics: false,
-    render3d: true,
-    threeKind: "walk",
-    sample(params, rand) {
-      return binomialSample(params.steps, params.p, rand);
-    },
-    theoretical(params, bins) {
-      const weights = [];
-      for (let k = 0; k < bins; k += 1) {
-        weights.push(binomialPmf(params.steps, k, params.p));
-      }
-      return weights;
-    },
-  },
   dice3d: {
     id: "dice3d",
     title: "離散一様分布",
@@ -801,7 +770,7 @@ function resizeCanvas() {
 
 function syncCanvasVisibility() {
   const use3d = !!state.active.render3d;
-  els.canvas.hidden = use3d;
+  els.canvas.hidden = false; // always shown; overlays 3D canvas for histogram strip
   els.canvas3d.hidden = !use3d;
 }
 
@@ -840,6 +809,48 @@ function frame(now) {
   if (state.active.render3d) {
     getThreeScene(state.active).step(dt);
     getThreeScene(state.active).render(width, height);
+    ctx.clearRect(0, 0, width, height);
+    if (state.bins.length > 0) {
+      const stripH = Math.min(height * 0.28, 170);
+      const stripTop = height - stripH;
+      ctx.save();
+      ctx.fillStyle = "rgba(4, 10, 20, 0.78)";
+      ctx.fillRect(0, stripTop - 10, width, stripH + 10);
+      ctx.restore();
+      drawHistogramStrip(ctx, state, width * 0.04, stripTop, width * 0.92, stripH - 18);
+      ctx.save();
+      ctx.fillStyle = "rgba(255,255,255,0.45)";
+      ctx.font = "600 11px Trebuchet MS, sans-serif";
+      ctx.textAlign = "center";
+      const binW = (width * 0.92) / state.bins.length;
+      for (let i = 0; i < state.bins.length; i++) {
+        ctx.fillText(String(i + 1), width * 0.04 + i * binW + binW / 2, height - 4);
+      }
+      ctx.restore();
+      // Progress counter
+      const ts = state.threeScene;
+      if (ts && ts.running && !ts.complete) {
+        const trialN = Math.min(ts.completed + 1, ts.total);
+        const currentTosses = ts.active?.trial?.tosses ?? 0;
+        const mode = ts.mode;
+        const isSingleFlip = mode === "bernoulli" || mode === "dice";
+        const maxTosses = mode === "binom"
+          ? ts.trialSize
+          : mode === "geometric"
+          ? ts.maxTries
+          : ts.maxFailures; // negbinom
+        const tossN = Math.min(currentTosses + 1, maxTosses);
+        ctx.save();
+        ctx.fillStyle = "rgba(255,255,255,0.52)";
+        ctx.font = "600 12px Trebuchet MS, sans-serif";
+        ctx.textAlign = "left";
+        const label = isSingleFlip
+          ? `コイン ${trialN}/${ts.total}`
+          : `試行 ${trialN}/${ts.total}  投 ${tossN}/${maxTosses}`;
+        ctx.fillText(label, width * 0.04, stripTop - 14);
+        ctx.restore();
+      }
+    }
   } else {
     ctx.clearRect(0, 0, width, height);
     drawBackground(ctx, width, height);

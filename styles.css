@@ -303,7 +303,20 @@ h1 {
   display: block;
 }
 
+#scene {
+  z-index: 2;
+  pointer-events: none;
+}
+
+#scene-3d {
+  z-index: 1;
+}
+
 #scene-3d[hidden] {
+  display: none;
+}
+
+#scene[hidden] {
   display: none;
 }
 
