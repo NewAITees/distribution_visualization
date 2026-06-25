@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>3D Bingo Machine</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #080818; color: #fff; font-family: sans-serif; overflow: hidden; }
+canvas { display: block; }
+#ui {
+  position: fixed; top: 16px; left: 50%; transform: translateX(-50%);
+  display: flex; gap: 10px; z-index: 10;
+}
+button {
+  background: rgba(255,255,255,0.13); border: 1px solid rgba(255,255,255,0.3);
+  color: #fff; padding: 9px 22px; border-radius: 22px; font-size: 14px; cursor: pointer;
+}
+button:hover { background: rgba(255,255,255,0.23); }
+button:disabled { opacity: 0.35; cursor: default; }
+#status {
+  position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+  font-size: 15px; color: rgba(255,255,255,0.55);
+}
+#result {
+  position: fixed; top: 46%; left: 50%; transform: translate(-50%,-50%);
+  font-size: 84px; font-weight: bold; color: #ffe066;
+  text-shadow: 0 0 28px #ffaa00; opacity: 0; transition: opacity 0.4s; pointer-events: none;
+}
+#history {
+  position: fixed; right: 14px; top: 14px; bottom: 14px; width: 144px;
+  background: rgba(0,0,0,0.5); border-radius: 10px; padding: 10px;
+  overflow-y: auto; border: 1px solid rgba(255,255,255,0.1);
+}
+#history h3 { font-size: 11px; color: rgba(255,255,255,0.4); margin-bottom: 6px; }
+.nb {
+  display: inline-block; width: 33px; height: 33px; line-height: 33px;
+  text-align: center; border-radius: 50%; font-size: 12px; font-weight: bold; margin: 2px;
+}
+.cB{background:#3b82f6;} .cI{background:#8b5cf6;} .cN{background:#ec4899;}
+.cG{background:#f59e0b;color:#000;} .cO{background:#10b981;}
+#loading {
+  position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: #080818; font-size: 18px; color: rgba(255,255,255,0.6); z-index: 99;
+}
+</style>
+</head>
+<body>
+<div id="loading">読み込み中...</div>
+<div id="ui">
+  <button id="btnSpin">回転開始</button>
+  <button id="btnDraw" disabled>1球取り出す</button>
+  <button id="btnReset">リセット</button>
+</div>
+<div id="result"></div>
+<div id="status">残り <span id="rem">75</span> 球</div>
+<div id="history"><h3>出た番号</h3><div id="histList"></div></div>
+
+<!-- Three.js UMD (no importmap needed) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<!-- OrbitControls inline -->
+<script>
+THREE.OrbitControls = function(camera, domEl) {
+  var self = this;
+  this.target = new THREE.Vector3();
+  this.enableDamping = false;
+  this.dampingFactor = 0.1;
+  var sph = new THREE.Spherical();
+  var sDelta = new THREE.Spherical();
+  var scale = 1;
+  var dragging = false, lastX = 0, lastY = 0;
+  sph.setFromVector3(camera.position.clone().sub(this.target));
+  this.update = function() {
+    sph.theta  += sDelta.theta;
+    sph.phi    += sDelta.phi;
+    sph.phi     = Math.max(0.05, Math.min(Math.PI - 0.05, sph.phi));
+    sph.radius *= scale;
+    sph.radius  = Math.max(2, Math.min(80, sph.radius));
+    if (self.enableDamping) {
+      sDelta.theta *= (1 - self.dampingFactor);
+      sDelta.phi   *= (1 - self.dampingFactor);
+    } else { sDelta.theta = 0; sDelta.phi = 0; }
+    scale = 1;
+    camera.position.copy(self.target).add(new THREE.Vector3().setFromSpherical(sph));
+    camera.lookAt(self.target);
+  };
+  domEl.addEventListener("mousedown", function(e){ dragging=true; lastX=e.clientX; lastY=e.clientY; });
+  window.addEventListener("mouseup",  function(){ dragging=false; });
+  window.addEventListener("mousemove",function(e){
+    if(!dragging) return;
+    sDelta.theta -= (e.clientX-lastX)*0.005;
+    sDelta.phi   -= (e.clientY-lastY)*0.005;
+    lastX=e.clientX; lastY=e.clientY;
+    self.update();
+  });
+  domEl.addEventListener("wheel",function(e){
+    scale *= e.deltaY>0?1.1:0.9; self.update();
+  },{passive:true});
+};
+</script>
+<!-- Rapier via esm.sh wrapped as UMD-compatible dynamic import -->
+<script type="module">
+import RAPIER from 'https://cdn.jsdelivr.net/npm/@dimforge/rapier3d-compat@0.12.0/rapier.es.js';
+await RAPIER.init();
+window._RAPIER = RAPIER;
+window.dispatchEvent(new Event('rapierReady'));
+</script>
+<script>
+window.addEventListener('rapierReady', function() {
+  document.getElementById('loading').style.display = 'none';
+  initBingo(window._RAPIER);
+});
+
+function initBingo(RAPIER) {
+  const DR = 3.2, DH = 5.0, BR = 0.27, TOTAL = 75;
+
+  // renderer
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  document.body.appendChild(renderer.domElement);
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x080818);
+
+  const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.1, 200);
+  camera.position.set(0, 6, 16);
+
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.target.set(0, 0, 0);
+  controls.enableDamping = true;
+
+  // lights
+  scene.add(new THREE.AmbientLight(0x445566, 2.5));
+  const dLight = new THREE.DirectionalLight(0xffffff, 3);
+  dLight.position.set(6, 12, 6);
+  dLight.castShadow = true;
+  scene.add(dLight);
+  const pLight = new THREE.PointLight(0x4466ff, 3, 25);
+  pLight.position.set(-4, 6, 4);
+  scene.add(pLight);
+
+  // Rapier world
+  const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 });
+
+  // ── drum physics ──────────────────────────────────────────────────
+  const drumRB = world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
+  const SEGS = 32;
+
+  for (let i = 0; i < SEGS; i++) {
+    const a1 = (i / SEGS) * Math.PI * 2;
+    const a2 = ((i + 1) / SEGS) * Math.PI * 2;
+    const ma = (a1 + a2) / 2;
+    const mx = Math.cos(ma) * DR, mz = Math.sin(ma) * DR;
+    const chord = 2 * DR * Math.sin(Math.PI / SEGS);
+    const rot = ma + Math.PI / 2;
+    world.createCollider(
+      RAPIER.ColliderDesc.cuboid(chord / 2, DH / 2, 0.15)
+        .setTranslation(mx, 0, mz)
+        .setRotation({ x: 0, y: Math.sin(rot / 2), z: 0, w: Math.cos(rot / 2) })
+        .setRestitution(0.3).setFriction(0.5),
+      drumRB
+    );
+  }
+  // floor & ceiling
+  world.createCollider(
+    RAPIER.ColliderDesc.cylinder(0.08, DR - 0.15).setTranslation(0, -DH / 2, 0)
+      .setRestitution(0.3).setFriction(0.6), drumRB);
+  world.createCollider(
+    RAPIER.ColliderDesc.cylinder(0.08, DR - 0.15).setTranslation(0, DH / 2, 0)
+      .setRestitution(0.3).setFriction(0.6), drumRB);
+
+  // ── drum visual ───────────────────────────────────────────────────
+  const drumGroup = new THREE.Group();
+  scene.add(drumGroup);
+
+  const metalMat = new THREE.MeshStandardMaterial({ color: 0x5588bb, metalness: 0.9, roughness: 0.15 });
+  const ringMat  = new THREE.MeshStandardMaterial({ color: 0x1a3355, metalness: 0.95, roughness: 0.1 });
+  const panelMat = new THREE.MeshStandardMaterial({
+    color: 0x88bbff, transparent: true, opacity: 0.25,
+    side: THREE.DoubleSide, depthWrite: false
+  });
+
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * Math.PI * 2;
+    const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, DH, 8), metalMat);
+    bar.position.set(Math.cos(a) * DR, 0, Math.sin(a) * DR);
+    drumGroup.add(bar);
+  }
+  for (let r = 0; r < 5; r++) {
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(DR, 0.13, 8, 48), ringMat);
+    ring.rotation.x = Math.PI / 2;
+    ring.position.y = -DH / 2 + r * (DH / 4);
+    drumGroup.add(ring);
+  }
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+    const pw = 2 * DR * Math.sin(Math.PI / 8) * 0.87;
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(pw, DH * 0.87), panelMat);
+    p.position.set(Math.cos(a) * (DR - 0.04), 0, Math.sin(a) * (DR - 0.04));
+    p.rotation.y = -(a - Math.PI / 2);
+    drumGroup.add(p);
+  }
+  const capMat = new THREE.MeshStandardMaterial({ color: 0x223355, metalness: 0.8, roughness: 0.2, side: THREE.DoubleSide });
+  [-1, 1].forEach(s => {
+    const cap = new THREE.Mesh(new THREE.CircleGeometry(DR - 0.12, 32), capMat);
+    cap.rotation.x = s > 0 ? -Math.PI / 2 : Math.PI / 2;
+    cap.position.y = s * DH / 2;
+    drumGroup.add(cap);
+  });
+
+  // agitator
+  const agGroup = new THREE.Group();
+  drumGroup.add(agGroup);
+  const bladeMat = new THREE.MeshStandardMaterial({ color: 0x2244aa, metalness: 0.7, roughness: 0.3 });
+  for (let i = 0; i < 4; i++) {
+    const bl = new THREE.Mesh(new THREE.BoxGeometry(DR * 0.72, 0.1, 0.55), bladeMat);
+    bl.rotation.y = (i / 4) * Math.PI * 2;
+    bl.rotation.z = 0.2;
+    agGroup.add(bl);
+  }
+
+  // base + exit tube + tray
+  const base = new THREE.Mesh(
+    new THREE.CylinderGeometry(1.4, 1.7, 0.55, 32),
+    new THREE.MeshStandardMaterial({ color: 0x0c1a2e, metalness: 0.9, roughness: 0.15 }));
+  base.position.y = -DH / 2 - 0.28;
+  drumGroup.add(base);
+
+  const exitTube = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.4, 0.4, 1.5, 12),
+    new THREE.MeshStandardMaterial({ color: 0x1a2a44, metalness: 0.8, roughness: 0.2 }));
+  exitTube.rotation.z = Math.PI / 2;
+  exitTube.position.set(DR + 0.5, -DH / 2 + 0.85, 0);
+  scene.add(exitTube);
+
+  const tray = new THREE.Mesh(
+    new THREE.BoxGeometry(3.6, 0.12, 1.5),
+    new THREE.MeshStandardMaterial({ color: 0x111e33, metalness: 0.6, roughness: 0.4 }));
+  tray.position.set(DR + 2.55, -DH / 2 - 0.15, 0);
+  scene.add(tray);
+
+  // ── balls ─────────────────────────────────────────────────────────
+  const COLS = [
+    { c:'B', lo:1,  hi:15,  hex:0x3b82f6 },
+    { c:'I', lo:16, hi:30,  hex:0x8b5cf6 },
+    { c:'N', lo:31, hi:45,  hex:0xec4899 },
+    { c:'G', lo:46, hi:60,  hex:0xf59e0b },
+    { c:'O', lo:61, hi:75,  hex:0x10b981 },
+  ];
+  function colOf(n) { return COLS.find(c => n >= c.lo && n <= c.hi); }
+
+  const tc = document.createElement('canvas'); tc.width = tc.height = 128;
+  const tctx = tc.getContext('2d');
+  function makeTex(num, hex) {
+    const r=(hex>>16)&0xff, g=(hex>>8)&0xff, b=hex&0xff;
+    tctx.clearRect(0,0,128,128);
+    tctx.fillStyle=`rgb(${r},${g},${b})`;
+    tctx.beginPath(); tctx.arc(64,64,60,0,Math.PI*2); tctx.fill();
+    tctx.fillStyle='#fff'; tctx.beginPath(); tctx.arc(64,50,25,0,Math.PI*2); tctx.fill();
+    tctx.fillStyle='#111'; tctx.font='bold 21px sans-serif';
+    tctx.textAlign='center'; tctx.textBaseline='middle';
+    tctx.fillText(String(num),64,50);
+    const t=new THREE.CanvasTexture(tc); t.needsUpdate=true; return t;
+  }
+
+  const ballGeo = new THREE.SphereGeometry(BR, 14, 14);
+  const balls = [];
+
+  for (let n = 1; n <= TOTAL; n++) {
+    const ci = colOf(n);
+    const mesh = new THREE.Mesh(
+      ballGeo,
+      new THREE.MeshStandardMaterial({ map: makeTex(n, ci.hex), roughness: 0.3 })
+    );
+    mesh.castShadow = true;
+    scene.add(mesh);
+
+    const safeR = DR - BR - 0.3;
+    const angle = Math.random() * Math.PI * 2;
+    const rad   = Math.random() * safeR;
+    const px = Math.cos(angle) * rad;
+    const pz = Math.sin(angle) * rad;
+    const py = -DH / 2 + BR + 0.15 + Math.random() * (DH * 0.75);
+
+    const rb = world.createRigidBody(
+      RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation(px, py, pz)
+        .setLinearDamping(0.25)
+        .setAngularDamping(0.25)
+    );
+    world.createCollider(
+      RAPIER.ColliderDesc.ball(BR).setRestitution(0.35).setFriction(0.5), rb
+    );
+    balls.push({ mesh, rb, num: n, col: ci.c, alive: true });
+  }
+
+  // ── state ─────────────────────────────────────────────────────────
+  let spinning = false, agAngle = 0, remaining = TOTAL;
+  let ejecting = null, ejectFrame = 0;
+  const EJECT_F = 90;
+
+  // ── UI handlers ───────────────────────────────────────────────────
+  document.getElementById('btnSpin').onclick = function() {
+    spinning = true;
+    this.disabled = true;
+    document.getElementById('btnDraw').disabled = false;
+  };
+  document.getElementById('btnDraw').onclick = function() {
+    if (ejecting || remaining === 0) return;
+    this.disabled = true;
+    ejectBall();
+  };
+  document.getElementById('btnReset').onclick = function() { location.reload(); };
+
+  function ejectBall() {
+    let best = null, bestScore = -Infinity;
+    balls.forEach(b => {
+      if (!b.alive) return;
+      const t = b.rb.translation();
+      const score = t.x * 2 - Math.abs(t.y + DH / 2) * 0.4;
+      if (score > bestScore) { bestScore = score; best = b; }
+    });
+    if (!best) return;
+    best.alive = false;
+    world.removeRigidBody(best.rb);
+    ejecting = best;
+    ejectFrame = 0;
+  }
+
+  function showResult(num, col) {
+    const el = document.getElementById('result');
+    el.textContent = col + '-' + num;
+    el.style.opacity = '1';
+    setTimeout(() => { el.style.opacity = '0'; }, 2800);
+    const badge = document.createElement('span');
+    badge.className = 'nb c' + col;
+    badge.textContent = num;
+    document.getElementById('histList').insertBefore(badge, document.getElementById('histList').firstChild);
+    remaining--;
+    document.getElementById('rem').textContent = remaining;
+    if (remaining > 0) setTimeout(() => { document.getElementById('btnDraw').disabled = false; }, 2200);
+  }
+
+  // ── render loop ───────────────────────────────────────────────────
+  let elapsed = 0;
+  function animate() {
+    requestAnimationFrame(animate);
+    elapsed += 0.016;
+    world.step();
+
+    if (spinning) {
+      agAngle += 0.045;
+      agGroup.rotation.y = agAngle;
+      drumGroup.rotation.y += 0.004;
+
+      balls.forEach(b => {
+        if (!b.alive) return;
+        const p = b.rb.translation();
+        const d = Math.sqrt(p.x * p.x + p.z * p.z);
+        if (d > 0.05) {
+          const tx = -p.z / d, tz = p.x / d;
+          const up = Math.sin(elapsed * 1.7 + b.num * 0.18) * 3.2;
+          b.rb.applyImpulse({ x: tx * 0.022, y: up * 0.006, z: tz * 0.022 }, true);
+        }
+        // clamp inside drum
+        const r2 = Math.sqrt(p.x * p.x + p.z * p.z);
+        const maxR = DR - BR - 0.06;
+        if (r2 > maxR) {
+          const s = maxR / r2;
+          b.rb.setTranslation({ x: p.x * s, y: p.y, z: p.z * s }, true);
+          const v = b.rb.linvel();
+          const vr = (v.x * p.x + v.z * p.z) / r2;
+          if (vr > 0) b.rb.setLinvel({ x: v.x - vr * (p.x / r2), y: v.y, z: v.z - vr * (p.z / r2) }, true);
+        }
+        if (p.y < -DH / 2 + BR + 0.03) b.rb.setTranslation({ x: p.x, y: -DH / 2 + BR + 0.03, z: p.z }, true);
+        if (p.y >  DH / 2 - BR - 0.03) {
+          const v = b.rb.linvel();
+          if (v.y > 0) b.rb.setLinvel({ x: v.x, y: -v.y * 0.4, z: v.z }, true);
+        }
+      });
+    }
+
+    balls.forEach(b => {
+      if (!b.alive || b === ejecting) return;
+      const p = b.rb.translation(), q = b.rb.rotation();
+      b.mesh.position.set(p.x, p.y, p.z);
+      b.mesh.quaternion.set(q.x, q.y, q.z, q.w);
+    });
+
+    if (ejecting) {
+      ejectFrame++;
+      const tf = Math.min(ejectFrame / EJECT_F, 1);
+      const ease = tf < 0.5 ? 2 * tf * tf : -1 + (4 - 2 * tf) * tf;
+      ejecting.mesh.position.set(DR + 0.5 + ease * 3.8, (-DH / 2 + 0.8) - ease * 0.9, 0);
+      if (ejectFrame >= EJECT_F) {
+        showResult(ejecting.num, ejecting.col);
+        const done = ejecting; ejecting = null;
+        setTimeout(() => scene.remove(done.mesh), 4000);
+      }
+    }
+
+    controls.update();
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  window.addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+}
+</script>
+</body>
+</html>

@@ -830,23 +830,30 @@ function frame(now) {
       // Progress counter
       const ts = state.threeScene;
       if (ts && ts.running && !ts.complete) {
-        const trialN = Math.min(ts.completed + 1, ts.total);
-        const currentTosses = ts.active?.trial?.tosses ?? 0;
         const mode = ts.mode;
-        const isSingleFlip = mode === "bernoulli" || mode === "dice";
-        const maxTosses = mode === "binom"
-          ? ts.trialSize
-          : mode === "geometric"
-          ? ts.maxTries
-          : ts.maxFailures; // negbinom
-        const tossN = Math.min(currentTosses + 1, maxTosses);
+        const isBingo = mode === "bingo" || mode === "bingo_replace" || mode === "hypergeom";
+        let label;
+        if (isBingo) {
+          const trialN = Math.min(ts.trialIndex + 1, ts.total);
+          label = `試行 ${trialN}/${ts.total}  投 ${ts.drawsDone ?? 0}/${ts.draws ?? '?'}`;
+        } else {
+          const trialN = Math.min(ts.completed + 1, ts.total);
+          const currentTosses = ts.active?.trial?.tosses ?? 0;
+          const isSingleFlip = mode === "bernoulli" || mode === "dice";
+          const maxTosses = mode === "binom"
+            ? ts.trialSize
+            : mode === "geometric"
+            ? ts.maxTries
+            : ts.maxFailures;
+          const tossN = Math.min(currentTosses + 1, maxTosses);
+          label = isSingleFlip
+            ? `コイン ${trialN}/${ts.total}`
+            : `試行 ${trialN}/${ts.total}  投 ${tossN}/${maxTosses}`;
+        }
         ctx.save();
         ctx.fillStyle = "rgba(255,255,255,0.52)";
         ctx.font = "600 12px Trebuchet MS, sans-serif";
         ctx.textAlign = "left";
-        const label = isSingleFlip
-          ? `コイン ${trialN}/${ts.total}`
-          : `試行 ${trialN}/${ts.total}  投 ${tossN}/${maxTosses}`;
         ctx.fillText(label, width * 0.04, stripTop - 14);
         ctx.restore();
       }

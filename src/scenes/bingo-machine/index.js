@@ -1,313 +1,255 @@
-import { createThreeRuntime, createThreeRenderer } from "../../three/runtime.js";
-import { createBingoPhysics } from "./physics.js";
-import { hypergeometricPmf, binomialPmf, normalizeWeights } from "../../core/math.js";
+import { createThreeRuntime, createThreeRenderer } from '../../three/runtime.js';
+import { createBingoPhysics, BALL_RADIUS } from './physics.js';
+import { hypergeometricPmf, binomialPmf, normalizeWeights } from '../../core/math.js';
 
-function shuffle(values) {
-  for (let i = values.length - 1; i > 0; i -= 1) {
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+function shuffle(arr) {
+  for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
-    [values[i], values[j]] = [values[j], values[i]];
+    [arr[i], arr[j]] = [arr[j], arr[i]];
   }
-  return values;
+  return arr;
 }
 
 function disposeMesh(mesh) {
-  if (mesh.parent) {
-    mesh.parent.remove(mesh);
-  }
+  mesh.parent?.remove(mesh);
   mesh.geometry.dispose();
-  if (Array.isArray(mesh.material)) {
-    mesh.material.forEach((material) => material.dispose());
-  } else {
-    mesh.material.dispose();
-  }
+  if (Array.isArray(mesh.material)) mesh.material.forEach(m => m.dispose());
+  else mesh.material.dispose();
 }
 
-function makeBallMesh(THREE, success) {
-  const material = new THREE.MeshStandardMaterial({
-    color: success ? 0xff6a57 : 0xf2f4f7,
-    roughness: 0.52,
-    metalness: 0.12,
-  });
-  const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.22, 18, 18), material);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  return mesh;
-}
-
-function syncBallMesh(ball) {
-  if (!ball.rb || ball.removed) return;
-  const p = ball.rb.translation();
-  const r = ball.rb.rotation();
-  ball.mesh.position.set(p.x, p.y, p.z);
-  ball.mesh.quaternion.set(r.x, r.y, r.z, r.w);
-}
+// ── scene factory ─────────────────────────────────────────────────────────────
 
 export function createBingoMachineScene({ canvas, state }) {
   const runtime = createThreeRuntime();
   const { THREE, scene, camera, boardGroup } = runtime;
   const renderer = createThreeRenderer(canvas);
 
-  scene.fog = new THREE.Fog(0x08131d, 12, 42);
-  camera.position.set(0, 5.4, 16.0);
-  camera.lookAt(0, 0, 0);
+  scene.fog = new THREE.Fog(0x08131d, 22, 55);
+  // Camera: see full chamber top to exit
+  camera.position.set(0, -1.8, 17.0);
+  camera.lookAt(0, -1.5, 0);
 
+  // Floor decoration — lower than chamber floor (Y_FLOOR = -4.0)
   const floor = new THREE.Mesh(
-    new THREE.PlaneGeometry(52, 52),
+    new THREE.PlaneGeometry(60, 60),
     new THREE.MeshStandardMaterial({ color: 0x0f2133, roughness: 0.98, metalness: 0.02 }),
   );
   floor.rotation.x = -Math.PI / 2;
-  floor.position.y = -4.4;
+  floor.position.y = -7.5;
   boardGroup.add(floor);
-
-  const grid = new THREE.GridHelper(40, 28, 0x274e6d, 0x173247);
-  grid.position.y = -4.39;
+  const grid = new THREE.GridHelper(44, 30, 0x274e6d, 0x173247);
+  grid.position.y = -7.49;
   boardGroup.add(grid);
 
-  const drum = new THREE.Group();
-  boardGroup.add(drum);
+  // Chamber visual dims — match physics-core constants
+  const CW = 2.6, CD = 0.75;
+  const Y_FLOOR_VIS  = -3.8;
+  const Y_FUNNEL_VIS = -5.8;
+  const Y_TOP_VIS    =  8.0;
+  const CH = Y_TOP_VIS - Y_FLOOR_VIS;
+  const chamberY = (Y_TOP_VIS + Y_FLOOR_VIS) / 2;
 
-  const shell = new THREE.Mesh(
-    new THREE.SphereGeometry(3.2, 28, 22),
-    new THREE.MeshStandardMaterial({
-      color: 0x8bc8ff,
-      transparent: true,
-      opacity: 0.16,
-      roughness: 0.12,
-      metalness: 0.04,
-      side: THREE.DoubleSide,
-    }),
-  );
-  drum.add(shell);
+  const glassMat = new THREE.MeshStandardMaterial({
+    color: 0x8bc8ff, transparent: true, opacity: 0.09,
+    roughness: 0.1, metalness: 0.04, side: THREE.DoubleSide,
+  });
+  const edgeMat = new THREE.MeshStandardMaterial({ color: 0x3377aa, roughness: 0.5, metalness: 0.4 });
 
-  const shellWire = new THREE.Mesh(
-    new THREE.SphereGeometry(3.2, 24, 18),
-    new THREE.MeshStandardMaterial({
-      color: 0xd8f0ff,
-      transparent: true,
-      opacity: 0.08,
-      wireframe: true,
-      roughness: 0.1,
-      metalness: 0.05,
-    }),
-  );
-  drum.add(shellWire);
+  const chamberGroup = new THREE.Group();
+  boardGroup.add(chamberGroup);
 
-  const outlet = new THREE.Mesh(
-    new THREE.BoxGeometry(1.05, 0.95, 0.78),
-    new THREE.MeshStandardMaterial({ color: 0x09111d, transparent: true, opacity: 0.74 }),
-  );
-  outlet.position.set(0, -3.06, 0);
-  drum.add(outlet);
-
-  const ring = new THREE.Mesh(
-    new THREE.TorusGeometry(3.2, 0.08, 12, 48),
-    new THREE.MeshStandardMaterial({ color: 0xd4f0ff, emissive: 0x163247, emissiveIntensity: 0.18 }),
-  );
-  ring.rotation.x = Math.PI / 2;
-  drum.add(ring);
-
-  const support = new THREE.Mesh(
-    new THREE.CylinderGeometry(0.16, 0.16, 7.8, 14),
-    new THREE.MeshStandardMaterial({ color: 0x344d67, roughness: 0.92, metalness: 0.1 }),
-  );
-  support.rotation.z = Math.PI / 2;
-  drum.add(support);
-
-  scene.add(new THREE.AmbientLight(0xffffff, 1.0));
-  const key = new THREE.DirectionalLight(0xffffff, 1.1);
-  key.position.set(-5, 8, 9);
-  scene.add(key);
-  const fill = new THREE.PointLight(0x84c6ff, 1.0, 40);
-  fill.position.set(4, 4, 8);
-  scene.add(fill);
-
-  const physics = createBingoPhysics({
-    ballRadius: 0.22,
-    chamberHalfWidth: 2.75,
-    chamberHalfHeight: 2.0,
-    chamberHalfDepth: 1.75,
+  // Front & back glass panels
+  [CD, -CD].forEach(z => {
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(CW * 2, CH), glassMat);
+    p.position.set(0, chamberY, z);
+    chamberGroup.add(p);
+  });
+  // Left & right glass panels
+  [-CW, CW].forEach(x => {
+    const p = new THREE.Mesh(new THREE.PlaneGeometry(CD * 2, CH), glassMat);
+    p.rotation.y = Math.PI / 2;
+    p.position.set(x, chamberY, 0);
+    chamberGroup.add(p);
+  });
+  // Vertical edge tubes
+  const tubeGeo = new THREE.CylinderGeometry(0.05, 0.05, CH, 8);
+  [[-CW, CD], [CW, CD], [-CW, -CD], [CW, -CD]].forEach(([x, z]) => {
+    const t = new THREE.Mesh(tubeGeo, edgeMat);
+    t.position.set(x, chamberY, z);
+    chamberGroup.add(t);
   });
 
-  const runtimeState = {
-    mode: "hypergeom",
+  // Funnel visual — angled ramps matching physics geometry
+  const HOLE_VIS   = 0.34;
+  const funnelH    = Y_FLOOR_VIS - Y_FUNNEL_VIS;  // 2.0m
+  const funnelDX   = CW - HOLE_VIS;
+  const panelLen   = Math.sqrt(funnelH * funnelH + funnelDX * funnelDX);
+  const funnelAngle = Math.atan2(funnelH, funnelDX);
+  const funnelCX   = (CW + HOLE_VIS) / 2;
+  const funnelCY   = (Y_FLOOR_VIS + Y_FUNNEL_VIS) / 2;
+
+  const funnelMat = new THREE.MeshStandardMaterial({
+    color: 0x2255aa, roughness: 0.4, metalness: 0.5,
+    transparent: true, opacity: 0.75, side: THREE.DoubleSide,
+  });
+
+  // Left ramp — outer edge high (Y_FLOOR), inner edge low (Y_FUNNEL)
+  const lRamp = new THREE.Mesh(new THREE.BoxGeometry(panelLen, 0.14, CD * 2), funnelMat);
+  lRamp.position.set(-funnelCX, funnelCY, 0);
+  lRamp.rotation.z = -funnelAngle;
+  chamberGroup.add(lRamp);
+
+  // Right ramp
+  const rRamp = new THREE.Mesh(new THREE.BoxGeometry(panelLen, 0.14, CD * 2), funnelMat);
+  rRamp.position.set(funnelCX, funnelCY, 0);
+  rRamp.rotation.z = funnelAngle;
+  chamberGroup.add(rRamp);
+
+  // Front ramp
+  const funnelDZ  = CD - HOLE_VIS * 0.8;
+  const panelLenZ = Math.sqrt(funnelH * funnelH + funnelDZ * funnelDZ);
+  const funnelAZ  = Math.atan2(funnelH, funnelDZ);
+  const funnelCZ  = (CD + HOLE_VIS * 0.8) / 2;
+
+  const fRamp = new THREE.Mesh(new THREE.BoxGeometry(HOLE_VIS * 2 + 1.0, 0.14, panelLenZ), funnelMat);
+  fRamp.position.set(0, funnelCY, funnelCZ);
+  fRamp.rotation.x = funnelAZ;
+  chamberGroup.add(fRamp);
+
+  // Back ramp
+  const bRamp = new THREE.Mesh(new THREE.BoxGeometry(HOLE_VIS * 2 + 1.0, 0.14, panelLenZ), funnelMat);
+  bRamp.position.set(0, funnelCY, -funnelCZ);
+  bRamp.rotation.x = -funnelAZ;
+  chamberGroup.add(bRamp);
+
+  // Glowing ring at the funnel exit
+  const exitRing = new THREE.Mesh(
+    new THREE.TorusGeometry(HOLE_VIS + 0.06, 0.06, 8, 28),
+    new THREE.MeshStandardMaterial({ color: 0xffcc00, emissive: 0xffaa00, emissiveIntensity: 1.0 }),
+  );
+  exitRing.rotation.x = Math.PI / 2;
+  exitRing.position.set(0, Y_FUNNEL_VIS + 0.05, 0);
+  chamberGroup.add(exitRing);
+
+  // Lights
+  scene.add(new THREE.AmbientLight(0xffffff, 1.1));
+  const key = new THREE.DirectionalLight(0xffffff, 1.2);
+  key.position.set(-5, 10, 8);
+  scene.add(key);
+  const fill = new THREE.PointLight(0x84c6ff, 1.0, 50);
+  fill.position.set(4, 6, 8);
+  scene.add(fill);
+
+  // ── runtime state ─────────────────────────────────────────────────────────
+
+  // spinnerMeshes: Array of { mesh: THREE.Mesh, rb: RigidBody }
+  // ballEntries: Map<id, { ball, mesh: THREE.Mesh }>
+  const spinnerMeshes = [];
+  const ballEntries   = new Map();
+
+  const rs = {
+    mode: 'hypergeom',
     withReplacement: false,
     running: false,
     paused: false,
     complete: false,
     total: 0,
     trialIndex: 0,
-    currentTrial: null,
-    spinSpeed: 0.95,
-    escapedBalls: [],
+    drawsDone: 0,
+    drawnSuccesses: 0,
+    draws: 1,
+    physics: null,
+    escapedBalls: [],  // Array of { mesh: THREE.Mesh, vel: THREE.Vector3 }
   };
 
-  function clearCurrentTrial() {
-    const disposed = new Set();
-    if (runtimeState.currentTrial) {
-      runtimeState.currentTrial.balls.forEach((ball) => {
-        if (disposed.has(ball.mesh)) return;
-        disposed.add(ball.mesh);
-        disposeMesh(ball.mesh);
-      });
-    }
-    physics.clear();
-    runtimeState.escapedBalls.forEach((ball) => {
-      if (disposed.has(ball.mesh)) return;
-      disposed.add(ball.mesh);
-      disposeMesh(ball.mesh);
-    });
-    runtimeState.escapedBalls = [];
+  // ── trial helpers ─────────────────────────────────────────────────────────
+
+  function clearTrial() {
+    // Dispose spinner meshes
+    for (const { mesh } of spinnerMeshes) disposeMesh(mesh);
+    spinnerMeshes.length = 0;
+
+    // Dispose ball meshes
+    for (const { mesh } of ballEntries.values()) disposeMesh(mesh);
+    ballEntries.clear();
+
+    // Dispose escaped-ball meshes
+    for (const e of rs.escapedBalls) disposeMesh(e.mesh);
+    rs.escapedBalls = [];
+
+    rs.physics     = null;
+    rs.drawsDone   = 0;
+    rs.drawnSuccesses = 0;
   }
 
-  function buildTrial() {
+  function makeBallMesh(success) {
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(BALL_RADIUS, 16, 14),
+      new THREE.MeshStandardMaterial({
+        color: success ? 0xff6a57 : 0xf2f4f7,
+        roughness: 0.52, metalness: 0.12,
+      }),
+    );
+    mesh.castShadow = true;
+    return mesh;
+  }
+
+  const spinnerMat = new THREE.MeshStandardMaterial({ color: 0x4499cc, roughness: 0.35, metalness: 0.5 });
+  const SPINNER_THICK = 0.09;  // visual thickness (matches physics half*2)
+
+  function startTrial() {
+    clearTrial();
+
     const population = Math.max(1, state.params.population || 1);
-    const successes = Math.max(0, Math.min(population, state.params.successes || 0));
-    const draws = Math.max(1, Math.min(population, state.params.draws || 1));
-    const values = shuffle([
-      ...Array.from({ length: successes }, () => 1),
-      ...Array.from({ length: population - successes }, () => 0),
-    ]);
+    const successes  = Math.max(0, Math.min(population, state.params.successes || 0));
+    rs.draws         = Math.max(1, Math.min(population, state.params.draws || 1));
 
-    return {
-      population,
-      successes,
-      draws,
-      values,
-      balls: [],
-      drawnSuccesses: 0,
-      drawsDone: 0,
-      finished: false,
-    };
-  }
+    const ids        = shuffle(Array.from({ length: population }, (_, i) => i + 1));
+    const successIds = new Set(ids.slice(0, successes));
 
-  function addBallToTrial(trial, success, position) {
-    const mesh = makeBallMesh(THREE, success);
-    mesh.position.copy(position);
-    mesh.rotation.set(
-      Math.random() * Math.PI,
-      Math.random() * Math.PI,
-      Math.random() * Math.PI,
-    );
-    boardGroup.add(mesh);
+    rs.physics = createBingoPhysics({ population, successIds });
 
-    const ball = {
-      success,
-      mesh,
-      radius: 0.22,
-      released: false,
-      removed: false,
-      rb: null,
-      collider: null,
-    };
-    trial.balls.push(ball);
-    physics.addBall(ball);
-  }
-
-  function populateTrial(trial) {
-    clearCurrentTrial();
-
-    const ballCount = trial.values.length;
-    const radius = 2.25;
-    for (let i = 0; i < ballCount; i += 1) {
-      const success = !!trial.values[i];
-      const theta = Math.random() * Math.PI * 2;
-      const rr = Math.sqrt(Math.random()) * radius;
-      const x = Math.cos(theta) * rr;
-      const y = -1.25 + Math.random() * 2.7;
-      const z = Math.sin(theta) * rr;
-      addBallToTrial(trial, success, new THREE.Vector3(x, y, z));
-    }
-  }
-
-  function startTrial(index) {
-    runtimeState.trialIndex = index;
-    runtimeState.currentTrial = buildTrial();
-    populateTrial(runtimeState.currentTrial);
-    runtimeState.spinSpeed = runtimeState.withReplacement
-      ? 3.0 + Math.random() * 0.5
-      : 0.9 + Math.random() * 0.35;
-  }
-
-  function promoteReleasedBall(ball) {
-    if (!ball.rb) return;
-    const p = ball.rb.translation();
-    const r = ball.rb.rotation();
-    const v = ball.rb.linvel();
-    ball.mesh.position.set(p.x, p.y, p.z);
-    ball.mesh.quaternion.set(r.x, r.y, r.z, r.w);
-    boardGroup.remove(ball.mesh);
-    scene.add(ball.mesh);
-    runtimeState.escapedBalls.push({
-      mesh: ball.mesh,
-      velocity: new THREE.Vector3(v.x, v.y, v.z).multiplyScalar(0.65).add(
-        new THREE.Vector3((Math.random() - 0.5) * 0.25, -0.22, (Math.random() - 0.5) * 0.25),
-      ),
+    // Build spinner visual meshes
+    rs.physics.SPINNER_DEFS.forEach((def, idx) => {
+      const [x, y, , hLen, hDep] = def;
+      const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(hLen * 2, SPINNER_THICK, hDep * 2),
+        spinnerMat,
+      );
+      mesh.position.set(x, y, 0);
+      boardGroup.add(mesh);
+      spinnerMeshes.push({ mesh, rb: rs.physics.spinnerBodies[idx].rb });
     });
-    physics.removeBall(ball);
-  }
 
-  function returnBallToDrum(ball) {
-    const theta = Math.random() * Math.PI * 2;
-    const rr = Math.random() * 0.8;
-    const position = new THREE.Vector3(
-      Math.cos(theta) * rr,
-      1.6 + Math.random() * 0.8,
-      Math.sin(theta) * rr,
-    );
-    const velocity = new THREE.Vector3(
-      (Math.random() - 0.5) * 0.4,
-      -(0.3 + Math.random() * 0.4),
-      (Math.random() - 0.5) * 0.4,
-    );
-    const angularVelocity = new THREE.Vector3(
-      (Math.random() - 0.5) * 2.0,
-      (Math.random() - 0.5) * 2.0,
-      (Math.random() - 0.5) * 2.0,
-    );
-    physics.recycleBall(ball, position);
-    if (ball.rb) {
-      ball.rb.setLinvel({ x: velocity.x, y: velocity.y, z: velocity.z }, true);
-      ball.rb.setAngvel({ x: angularVelocity.x, y: angularVelocity.y, z: angularVelocity.z }, true);
+    // Build ball meshes
+    for (const ball of rs.physics.balls) {
+      const mesh = makeBallMesh(ball.success);
+      const p    = ball.rb.translation();
+      mesh.position.set(p.x, p.y, p.z);
+      boardGroup.add(mesh);
+      ballEntries.set(ball.id, { ball, mesh });
     }
-    ball.mesh.position.copy(position);
-    ball.released = false;
   }
 
-  function finishTrial() {
-    const trial = runtimeState.currentTrial;
-    if (!trial || trial.finished) return;
-    trial.finished = true;
-    state.bins[trial.drawnSuccesses] += 1;
-    state.samples.push(trial.drawnSuccesses);
-
-    runtimeState.trialIndex += 1;
-    if (runtimeState.trialIndex >= runtimeState.total) {
-      runtimeState.complete = true;
-      return;
-    }
-    startTrial(runtimeState.trialIndex);
-  }
+  // ── public API ────────────────────────────────────────────────────────────
 
   function reset(kind, startImmediately = false) {
-    runtimeState.mode = kind;
-    runtimeState.withReplacement = kind === "bingo_replace";
-    runtimeState.running = startImmediately;
-    runtimeState.paused = false;
-    runtimeState.complete = false;
-    runtimeState.total = state.params.samples;
-    runtimeState.trialIndex = 0;
-    runtimeState.escapedBalls = [];
-    runtimeState.spinSpeed = 1.0;
-    drum.rotation.set(0, 0, 0);
-    ring.rotation.x = Math.PI / 2;
+    rs.mode            = kind;
+    rs.withReplacement = kind === 'bingo_replace';
+    rs.running         = startImmediately;
+    rs.paused          = false;
+    rs.complete        = false;
+    rs.trialIndex      = 0;
 
     const population = Math.max(1, state.params.population || 1);
-    const successes = Math.max(0, Math.min(population, state.params.successes || 0));
-    const draws = Math.max(1, Math.min(population, state.params.draws || 1));
-    state.bins = Array.from({ length: draws + 1 }, () => 0);
-    state.samples = [];
+    const successes  = Math.max(0, Math.min(population, state.params.successes || 0));
+    const draws      = Math.max(1, Math.min(population, state.params.draws || 1));
+    state.bins        = Array.from({ length: draws + 1 }, () => 0);
+    state.samples     = [];
 
-    if (runtimeState.withReplacement) {
+    if (rs.withReplacement) {
       const p = successes / population;
       state.theoretical = normalizeWeights(
         Array.from({ length: draws + 1 }, (_, k) => binomialPmf(draws, k, p)),
@@ -322,77 +264,93 @@ export function createBingoMachineScene({ canvas, state }) {
       );
     }
 
-    state.paused = false;
-    state.threeScene = runtimeState;
-    startTrial(0);
-    if (!startImmediately) runtimeState.running = false;
+    rs.total      = state.params.samples;
+    state.paused  = false;
+    state.threeScene = rs;
+
+    startTrial();
+    if (!startImmediately) rs.running = false;
   }
 
   function setPaused(paused) {
-    runtimeState.paused = paused;
+    rs.paused    = paused;
     state.paused = paused;
   }
 
-  function settleEscapedBalls(dt) {
-    runtimeState.escapedBalls.forEach((ball) => {
-      ball.velocity.y -= 8.6 * dt;
-      ball.mesh.position.addScaledVector(ball.velocity, dt);
-      ball.mesh.rotation.x += dt * 1.2;
-      ball.mesh.rotation.y += dt * 1.6;
-      if (ball.mesh.position.y < -8.0) {
-        disposeMesh(ball.mesh);
-        ball.dead = true;
-      }
-    });
-    runtimeState.escapedBalls = runtimeState.escapedBalls.filter((ball) => !ball.dead);
-  }
-
   function step(dtMs) {
-    if (!runtimeState.running || runtimeState.paused || runtimeState.complete) return;
+    if (!rs.running || rs.paused || rs.complete || !rs.physics) return;
 
-    const substeps = runtimeState.withReplacement ? 4 : 1;
-    const dt = dtMs / 1000 / substeps;
+    const dtSec = Math.max(1 / 240, Math.min(dtMs / 1000, 1 / 24));
 
-    for (let s = 0; s < substeps; s += 1) {
-      drum.rotation.x += runtimeState.spinSpeed * dt;
-      ring.rotation.z += dt * 0.35;
+    // Advance physics — get balls that just exited
+    const newExits = rs.physics.step(dtSec);
 
-      const trial = runtimeState.currentTrial;
-      if (!trial || trial.finished) break;
+    for (const ball of newExits) {
+      if (rs.drawsDone >= rs.draws) break;
+      rs.drawsDone++;
+      if (ball.success) rs.drawnSuccesses++;
 
-      const remainingDraws = Math.max(0, trial.draws - trial.drawsDone);
-      const released = physics.step(dt * 1000, drum.rotation.x, runtimeState.spinSpeed, remainingDraws);
-
-      released.forEach((ball) => {
-        if (trial.finished) return;
-        trial.drawsDone += 1;
-        if (ball.success) trial.drawnSuccesses += 1;
-        if (runtimeState.withReplacement) {
-          returnBallToDrum(ball);
-        } else {
-          promoteReleasedBall(ball);
-        }
-      });
-
-      trial.balls.forEach((ball) => {
-        if (ball.rb && !ball.removed && ball.mesh.parent === boardGroup) {
-          syncBallMesh(ball);
-        }
-      });
-
-      if (trial.drawsDone >= trial.draws) {
-        finishTrial();
-        break;
+      const entry = ballEntries.get(ball.id);
+      if (entry) {
+        const { mesh } = entry;
+        boardGroup.remove(mesh);
+        scene.add(mesh);
+        rs.escapedBalls.push({
+          mesh,
+          vel: new THREE.Vector3(
+            (Math.random() - 0.5) * 1.4,
+            -(1.2 + Math.random() * 1.2),
+            (Math.random() - 0.5) * 0.9,
+          ),
+        });
+        ballEntries.delete(ball.id);
       }
     }
 
-    settleEscapedBalls(dtMs / 1000);
+    // Sync ball meshes to physics positions
+    for (const { ball, mesh } of ballEntries.values()) {
+      if (ball.rb && !ball.removed) {
+        const p = ball.rb.translation();
+        const r = ball.rb.rotation();
+        mesh.position.set(p.x, p.y, p.z);
+        mesh.quaternion.set(r.x, r.y, r.z, r.w);
+      }
+    }
+
+    // Sync spinner mesh rotations from physics
+    for (const { mesh, rb } of spinnerMeshes) {
+      const r = rb.rotation();
+      mesh.quaternion.set(r.x, r.y, r.z, r.w);
+    }
+
+    // Gravity-settle escaped balls
+    rs.escapedBalls.forEach(e => {
+      e.vel.y -= 9.0 * dtSec;
+      e.mesh.position.addScaledVector(e.vel, dtSec);
+      e.mesh.rotation.x += dtSec * 1.4;
+      if (e.mesh.position.y < -12) { disposeMesh(e.mesh); e.dead = true; }
+    });
+    rs.escapedBalls = rs.escapedBalls.filter(e => !e.dead);
+
+    // Trial done when enough balls drawn
+    if (rs.drawsDone >= rs.draws) {
+      state.bins[rs.drawnSuccesses]++;
+      state.samples.push(rs.drawnSuccesses);
+      rs.trialIndex++;
+
+      if (rs.trialIndex >= rs.total) {
+        rs.complete = true;
+        rs.running  = false;
+        return;
+      }
+      startTrial();
+    }
   }
 
   function render(width, height) {
     if (!canvas) return;
     if (canvas.width !== width || canvas.height !== height) {
-      canvas.width = width;
+      canvas.width  = width;
       canvas.height = height;
     }
     renderer.setSize(width, height, false);
@@ -406,8 +364,7 @@ export function createBingoMachineScene({ canvas, state }) {
     step,
     render,
     setPaused,
-    get complete() {
-      return runtimeState.complete;
-    },
+    get complete() { return rs.complete; },
   };
 }
+
