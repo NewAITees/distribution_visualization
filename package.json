@@ -3,7 +3,8 @@
   "scripts": {
     "lint": "eslint src main.js",
     "test": "node tests/run-tests.mjs",
-    "verify:funnel": "node src/scenes/pachinko-draw/verify-funnel.mjs"
+    "verify:funnel": "node src/scenes/pachinko-draw/verify-funnel.mjs",
+    "serve": "node serve-static.mjs"
   },
   "dependencies": {
     "@dimforge/rapier3d-compat": "^0.19.3",
