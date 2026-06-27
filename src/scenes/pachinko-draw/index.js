@@ -108,18 +108,19 @@ export function createPachinkoDrawScene({ canvas, state }) {
   chamberGroup.add(rRamp);
 
   // Front ramp
-  const funnelDZ  = CD - HOLE_VIS * 0.8;
-  const panelLenZ = Math.sqrt(funnelH * funnelH + funnelDZ * funnelDZ);
-  const funnelAZ  = Math.atan2(funnelH, funnelDZ);
-  const funnelCZ  = (CD + HOLE_VIS * 0.8) / 2;
+  const HOLE_VIS_Z = HOLE_VIS * 0.8;
+  const funnelDZ   = CD - HOLE_VIS_Z;
+  const panelLenZ  = Math.sqrt(funnelH * funnelH + funnelDZ * funnelDZ);
+  const funnelAZ   = Math.atan2(funnelH, funnelDZ);
+  const funnelCZ   = (CD + HOLE_VIS_Z) / 2;
 
-  const fRamp = new THREE.Mesh(new THREE.BoxGeometry(HOLE_VIS * 2 + 1.0, 0.14, panelLenZ), funnelMat);
+  const fRamp = new THREE.Mesh(new THREE.BoxGeometry(CW * 2, 0.14, panelLenZ), funnelMat);
   fRamp.position.set(0, funnelCY, funnelCZ);
   fRamp.rotation.x = funnelAZ;
   chamberGroup.add(fRamp);
 
   // Back ramp
-  const bRamp = new THREE.Mesh(new THREE.BoxGeometry(HOLE_VIS * 2 + 1.0, 0.14, panelLenZ), funnelMat);
+  const bRamp = new THREE.Mesh(new THREE.BoxGeometry(CW * 2, 0.14, panelLenZ), funnelMat);
   bRamp.position.set(0, funnelCY, -funnelCZ);
   bRamp.rotation.x = -funnelAZ;
   chamberGroup.add(bRamp);
