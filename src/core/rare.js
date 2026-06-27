@@ -43,7 +43,7 @@ function makeCurvePoints(sortedAttempts, machineCount, horizon, samplePoints = 1
   return points;
 }
 
-export function simulateRareBingo({ probabilityPercent, machineCount, seed = 1337 }) {
+export function simulateRarePachinkoDraw({ probabilityPercent, machineCount, seed = 1337 }) {
   const probability = Math.min(1, Math.max(0, probabilityPercent / 100));
   if (probability <= 0) {
     return {
@@ -112,3 +112,4 @@ export function simulateRareBingo({ probabilityPercent, machineCount, seed = 133
     curvePoints: makeCurvePoints(attempts, machineCount, horizon),
   };
 }
+

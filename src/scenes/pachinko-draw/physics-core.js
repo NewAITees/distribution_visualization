@@ -1,5 +1,5 @@
 /**
- * Spinner bingo physics core — RAPIER-agnostic.
+ * Pachinko draw physics core — RAPIER-agnostic.
  * Pass any RAPIER instance (browser or Node.js).
  *
  * All balls are dropped simultaneously from the top.
@@ -59,7 +59,7 @@ function spawnPositions(count) {
 }
 
 /**
- * Create a spinner world.
+ * Create a pachinko-draw world.
  * @param {object} RAPIER   - Rapier module (browser or Node.js)
  * @param {object} options
  * @param {number} options.population  - total ball count
@@ -67,7 +67,7 @@ function spawnPositions(count) {
  * @param {number} [options.dt=1/60]   - physics timestep in seconds
  * @returns Simulation object with step() and exitOrder[]
  */
-export function createSpinnerWorld(RAPIER, {
+export function createPachinkoDrawWorld(RAPIER, {
   population = 36,
   successIds = new Set(),
   dt = 1 / 60,
@@ -260,5 +260,6 @@ export function createSpinnerWorld(RAPIER, {
     SPINNER_DEFS,
   };
 }
+
 
 

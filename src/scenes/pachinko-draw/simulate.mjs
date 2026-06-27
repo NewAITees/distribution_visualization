@@ -1,6 +1,6 @@
 /**
- * Headless physics backend for the bingo machine.
- * Run: node src/scenes/bingo-machine/simulate.mjs
+ * Headless physics backend for the pachinko draw.
+ * Run: node src/scenes/pachinko-draw/simulate.mjs
  *
  * Verifies that:
  *  1. Paddles mix all balls over 2 seconds of simulation
@@ -227,7 +227,7 @@ function runOnce(seed) {
 
 // ─── main: run N times and report ─────────────────────────────────────────────
 const RUNS = 10;
-console.log(`\nBingo machine physics backend — ${RUNS} runs\n${'─'.repeat(48)}`);
+console.log(`\nPachinko draw physics backend — ${RUNS} runs\n${'─'.repeat(48)}`);
 
 const results = [];
 let failures  = 0;
@@ -252,4 +252,6 @@ console.log(`Unique IDs   : ${unique.size} / ${RUNS}  [${[...unique].sort((a,b)=
 console.log(failures === 0 && unique.size > 1 ? '\n✓ Physics backend OK — balls exit and are randomised.' : '\n✗ Physics backend has issues — check logs above.');
 
 process.exit(failures > 0 ? 1 : 0);
+
+
 

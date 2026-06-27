@@ -1,7 +1,7 @@
 import { createGaltonBoard } from "./src/scenes/galton/index.js";
 import { createCoinDiceScene } from "./src/scenes/coin-dice/index.js";
-import { createBingoMachineScene } from "./src/scenes/bingo-machine/index.js";
-import { simulateRareBingo } from "./src/core/rare.js";
+import { createPachinkoDrawScene } from "./src/scenes/pachinko-draw/index.js";
+import { simulateRarePachinkoDraw } from "./src/core/rare.js";
 import {
   toW,
   toS,
@@ -273,7 +273,7 @@ const distributionSpecs = {
   hypergeom: {
     id: "hypergeom",
     title: "超幾何分布",
-    tag: "bingo machine",
+    tag: "落下抽選器",
     shape: "減少する母集団",
     description:
       "3D のビンゴマシンで玉を戻さずに抽出し、成功数を集計する。箱の中身が減っていく様子で戻さない抽選を見せる。",
@@ -290,7 +290,7 @@ const distributionSpecs = {
     },
     physics: false,
     render3d: true,
-    threeKind: "bingo",
+    threeKind: "pachinko-draw",
     sample(params, rand) {
       return hypergeometricSample(params.population, params.successes, params.draws, rand);
     },
@@ -302,10 +302,10 @@ const distributionSpecs = {
       return weights;
     },
   },
-  binom_bingo: {
-    id: "binom_bingo",
+  binom_pachinko_draw: {
+    id: "binom_pachinko_draw",
     title: "二項分布（抽選）",
-    tag: "bingo machine",
+    tag: "落下抽選器",
     shape: "戻す抽選",
     description:
       "3D のビンゴマシンで玉を戻しながら抽出し、成功数を集計する。毎回同じ確率で引くため二項分布になる。超幾何分布と対比して「戻す」と「戻さない」の違いを見せる。",
@@ -322,7 +322,7 @@ const distributionSpecs = {
     },
     physics: false,
     render3d: true,
-    threeKind: "bingo_replace",
+    threeKind: "pachinko-draw-replace",
     sample(params, rand) {
       const p = params.successes / Math.max(1, params.population);
       return binomialSample(params.draws, p, rand);
@@ -339,7 +339,7 @@ const distributionSpecs = {
   rarehunt: {
     id: "rarehunt",
     title: "レア到達シミュレーション",
-    tag: "bingo machine",
+    tag: "落下抽選器",
     shape: "初当たりまで",
     description:
       "戻すタイプのビンゴマシンを大量に独立試行し、初当たりまでの平均回数と 50% / 80% 到達回数を出す。入力した当たり確率から、累積到達率がどう増えていくかを確認する。",
@@ -547,13 +547,13 @@ const coinDiceScene = createCoinDiceScene({
   state,
 });
 
-const bingoMachineScene = createBingoMachineScene({
+const pachinkoDrawScene = createPachinkoDrawScene({
   canvas: els.canvas3d,
   state,
 });
 
 function getThreeScene(definition) {
-  return definition.threeKind === "bingo" || definition.threeKind === "bingo_replace" ? bingoMachineScene : coinDiceScene;
+  return definition.threeKind === "pachinko-draw" || definition.threeKind === "pachinko-draw-replace" ? pachinkoDrawScene : coinDiceScene;
 }
 
 function currentParams() {
@@ -572,7 +572,7 @@ function formatAverage(value) {
 }
 
 function buildRareReport(params) {
-  state.rareReport = simulateRareBingo({
+  state.rareReport = simulateRarePachinkoDraw({
     probabilityPercent: params.probabilityPercent,
     machineCount: params.samples,
     seed: state.rngSeed,
@@ -831,9 +831,9 @@ function frame(now) {
       const ts = state.threeScene;
       if (ts && ts.running && !ts.complete) {
         const mode = ts.mode;
-        const isBingo = mode === "bingo" || mode === "bingo_replace" || mode === "hypergeom";
+        const isPachinkoDraw = mode === "pachinko-draw" || mode === "pachinko-draw-replace" || mode === "hypergeom";
         let label;
-        if (isBingo) {
+        if (isPachinkoDraw) {
           const trialN = Math.min(ts.trialIndex + 1, ts.total);
           label = `試行 ${trialN}/${ts.total}  投 ${ts.drawsDone ?? 0}/${ts.draws ?? '?'}`;
         } else {
@@ -974,3 +974,7 @@ try {
   console.error(error);
   els.description.textContent = `init failed: ${error.message}`;
 }
+
+
+
+

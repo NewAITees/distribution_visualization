@@ -1,7 +1,7 @@
 /**
  * Headless physics test for the compound kinematic drum.
  * Mirrors the new buildDrum() logic from physics.js.
- * Run: node src/scenes/bingo-machine/simulate-drum.mjs
+ * Run: node src/scenes/pachinko-draw/simulate-drum.mjs
  */
 /* global process */
 
@@ -271,4 +271,6 @@ console.log(ok
   : '\n✗ Issues found — check logs above.');
 
 process.exit(ok ? 0 : 1);
+
+
 

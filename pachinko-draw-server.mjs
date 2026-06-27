@@ -1,5 +1,5 @@
 /**
- * Bingo physics server — Node.js HTTP backend
+ * Pachinko draw physics server — Node.js HTTP backend
  * Port: 18432
  *
  * POST /simulate  { population, successes, draws, samples }
@@ -10,7 +10,7 @@
 
 import http from 'http';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { createSpinnerWorld } from './src/scenes/bingo-machine/physics-core.js';
+import { createPachinkoDrawWorld } from './src/scenes/pachinko-draw/physics-core.js';
 
 await RAPIER.init({});
 
@@ -22,7 +22,7 @@ let lastLogs = ['(no simulation run yet)'];
 
 // ── single trial ──────────────────────────────────────────────────────────────
 function runTrial({ population, successSet, draws, trialIdx, logs }) {
-  const sim = createSpinnerWorld(RAPIER, {
+  const sim = createPachinkoDrawWorld(RAPIER, {
     population,
     successIds: successSet,
     dt: DT,
@@ -74,7 +74,7 @@ function simulate({ population, successes, draws, samples }) {
   let grandTime   = 0;
   const started   = Date.now();
 
-  logs.push('=== bingo-server simulation start (spinner physics) ===');
+  logs.push('=== pachinko-draw simulation start (spinner physics) ===');
   logs.push(`population=${population}  successes=${successes}  draws=${draws}  samples=${samples}`);
   logs.push(`dt=${DT}  MAX_FRAMES=${MAX_FRAMES}`);
   logs.push('');
@@ -158,7 +158,9 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`bingo-server listening on http://localhost:${PORT}`);
+  console.log(`pachinko-draw-server listening on http://localhost:${PORT}`);
   console.log('  POST /simulate  { "population":36, "successes":10, "draws":5, "samples":20 }');
   console.log('  GET  /logs');
 });
+
+

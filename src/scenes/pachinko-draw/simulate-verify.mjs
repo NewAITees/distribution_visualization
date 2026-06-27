@@ -1,6 +1,6 @@
 /**
- * Physics verification for the compound drum bingo machine.
- * Run: node src/scenes/bingo-machine/simulate-verify.mjs
+ * Physics verification for the compound drum pachinko draw.
+ * Run: node src/scenes/pachinko-draw/simulate-verify.mjs
  *
  * Checks:
  *  1. Rib (羽) collisions — balls actually hit the ribs
@@ -292,7 +292,7 @@ const RUNS = 15;
 const results = [];
 
 console.log(`\n${'═'.repeat(60)}`);
-console.log(`  Bingo machine — physics verification  (${RUNS} runs)`);
+console.log(`  Pachinko draw — physics verification  (${RUNS} runs)`);
 console.log(`${'═'.repeat(60)}\n`);
 
 for (let i = 0; i < RUNS; i++) {
@@ -402,4 +402,6 @@ console.log(`  結果: ${passCount}/11 項目クリア`);
 console.log(`${'═'.repeat(60)}\n`);
 
 process.exit(passCount >= 9 ? 0 : 1);
+
+
 

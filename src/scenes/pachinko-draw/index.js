@@ -1,5 +1,5 @@
 import { createThreeRuntime, createThreeRenderer } from '../../three/runtime.js';
-import { createBingoPhysics, BALL_RADIUS } from './physics.js';
+import { createPachinkoDrawPhysics, BALL_RADIUS } from './physics.js';
 import { hypergeometricPmf, binomialPmf, normalizeWeights } from '../../core/math.js';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -21,7 +21,7 @@ function disposeMesh(mesh) {
 
 // ── scene factory ─────────────────────────────────────────────────────────────
 
-export function createBingoMachineScene({ canvas, state }) {
+export function createPachinkoDrawScene({ canvas, state }) {
   const runtime = createThreeRuntime();
   const { THREE, scene, camera, boardGroup } = runtime;
   const renderer = createThreeRenderer(canvas);
@@ -150,7 +150,7 @@ export function createBingoMachineScene({ canvas, state }) {
   const ballEntries   = new Map();
 
   const rs = {
-    mode: 'hypergeom',
+    mode: 'pachinko-draw',
     withReplacement: false,
     running: false,
     paused: false,
@@ -209,7 +209,7 @@ export function createBingoMachineScene({ canvas, state }) {
     const ids        = shuffle(Array.from({ length: population }, (_, i) => i + 1));
     const successIds = new Set(ids.slice(0, successes));
 
-    rs.physics = createBingoPhysics({ population, successIds });
+    rs.physics = createPachinkoDrawPhysics({ population, successIds });
 
     // Build spinner visual meshes
     rs.physics.SPINNER_DEFS.forEach((def, idx) => {
@@ -237,7 +237,7 @@ export function createBingoMachineScene({ canvas, state }) {
 
   function reset(kind, startImmediately = false) {
     rs.mode            = kind;
-    rs.withReplacement = kind === 'bingo_replace';
+    rs.withReplacement = kind === 'pachinko-draw-replace';
     rs.running         = startImmediately;
     rs.paused          = false;
     rs.complete        = false;
@@ -367,4 +367,5 @@ export function createBingoMachineScene({ canvas, state }) {
     get complete() { return rs.complete; },
   };
 }
+
 

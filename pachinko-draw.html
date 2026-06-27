@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>3D Bingo Machine</title>
+<title>3D Pachinko Draw</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { background: #080818; color: #fff; font-family: sans-serif; overflow: hidden; }
@@ -107,10 +107,10 @@ window.dispatchEvent(new Event('rapierReady'));
 <script>
 window.addEventListener('rapierReady', function() {
   document.getElementById('loading').style.display = 'none';
-  initBingo(window._RAPIER);
+  initPachinkoDraw(window._RAPIER);
 });
 
-function initBingo(RAPIER) {
+function initPachinkoDraw(RAPIER) {
   const DR = 3.2, DH = 5.0, BR = 0.27, TOTAL = 75;
 
   // renderer
@@ -414,3 +414,4 @@ function initBingo(RAPIER) {
 </script>
 </body>
 </html>
+
