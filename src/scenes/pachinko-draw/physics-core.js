@@ -80,6 +80,13 @@ export function createPachinkoDrawWorld(RAPIER, {
 
   const eq = new RAPIER.EventQueue(true);
 
+  // Collision groups: balls ignore each other to prevent funnel jams.
+  // membership bits | filter bits packed into a single u32 (high16 | low16).
+  const GRP_STATIC = 0x0001; // walls, ramps, spinners, sensor
+  const GRP_BALL   = 0x0002; // balls
+  const GROUPS_STATIC = (GRP_STATIC << 16) | (GRP_STATIC | GRP_BALL);
+  const GROUPS_BALL   = (GRP_BALL   << 16) | GRP_STATIC; // balls only hit statics
+
   function fixedBox(cx, cy, cz, hx, hy, hz, fr = 0.65, res = 0.18) {
     const rb = world.createRigidBody(
       RAPIER.RigidBodyDesc.fixed().setTranslation(cx, cy, cz),
@@ -87,6 +94,7 @@ export function createPachinkoDrawWorld(RAPIER, {
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(hx, hy, hz)
         .setFriction(fr).setRestitution(res)
+        .setCollisionGroups(GROUPS_STATIC)
         .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
       rb,
     );
@@ -118,6 +126,7 @@ export function createPachinkoDrawWorld(RAPIER, {
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(panelLen / 2, 0.09, D)
         .setFriction(0.4).setRestitution(0.1)
+        .setCollisionGroups(GROUPS_STATIC)
         .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
       lbL,
     );
@@ -127,6 +136,7 @@ export function createPachinkoDrawWorld(RAPIER, {
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(panelLen / 2, 0.09, D)
         .setFriction(0.4).setRestitution(0.1)
+        .setCollisionGroups(GROUPS_STATIC)
         .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
       lbR,
     );
@@ -140,6 +150,7 @@ export function createPachinkoDrawWorld(RAPIER, {
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(W, 0.09, panelLenZ / 2)
         .setFriction(0.4).setRestitution(0.1)
+        .setCollisionGroups(GROUPS_STATIC)
         .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
       lbF,
     );
@@ -149,6 +160,7 @@ export function createPachinkoDrawWorld(RAPIER, {
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(W, 0.09, panelLenZ / 2)
         .setFriction(0.4).setRestitution(0.1)
+        .setCollisionGroups(GROUPS_STATIC)
         .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
       lbB,
     );
@@ -160,7 +172,9 @@ export function createPachinkoDrawWorld(RAPIER, {
   );
   const sensorCol = world.createCollider(
     RAPIER.ColliderDesc.cuboid(HOLE_HALF_X - 0.02, 0.22, HOLE_HALF_Z - 0.02)
-      .setSensor(true).setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
+      .setSensor(true)
+      .setCollisionGroups(GROUPS_STATIC)
+      .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
     sensorRb,
   );
   const sensorHandle = sensorCol.handle;
@@ -173,6 +187,7 @@ export function createPachinkoDrawWorld(RAPIER, {
     world.createCollider(
       RAPIER.ColliderDesc.cuboid(hLen, SPINNER_HALF_THICK, hDep)
         .setFriction(0.55).setRestitution(0.25)
+        .setCollisionGroups(GROUPS_STATIC)
         .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
       rb,
     );
@@ -197,6 +212,7 @@ export function createPachinkoDrawWorld(RAPIER, {
     const col = world.createCollider(
       RAPIER.ColliderDesc.ball(BALL_RADIUS)
         .setDensity(4.0).setFriction(0.6).setRestitution(0.22)
+        .setCollisionGroups(GROUPS_BALL)
         .setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
       rb,
     );
