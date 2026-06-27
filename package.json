@@ -2,7 +2,7 @@
   "type": "module",
   "scripts": {
     "lint": "eslint src main.js",
-    "test": "vitest run",
+    "test": "node tests/run-tests.mjs",
     "verify:funnel": "node src/scenes/pachinko-draw/verify-funnel.mjs"
   },
   "dependencies": {
