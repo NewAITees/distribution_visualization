@@ -39,48 +39,13 @@ export function createPachinkoDrawScene({ canvas, state }) {
   floor.rotation.x = -Math.PI / 2;
   floor.position.y = -7.5;
   boardGroup.add(floor);
-  const grid = new THREE.GridHelper(44, 30, 0x274e6d, 0x173247);
-  grid.position.y = -7.49;
-  boardGroup.add(grid);
 
   // Chamber visual dims — match physics-core constants
   const CW = 2.6, CD = 0.75;
   const Y_FLOOR_VIS  = -3.8;
   const Y_FUNNEL_VIS = -5.8;
-  const Y_TOP_VIS    =  8.0;
-  const CH = Y_TOP_VIS - Y_FLOOR_VIS;
-  const chamberY = (Y_TOP_VIS + Y_FLOOR_VIS) / 2;
-
-  const glassMat = new THREE.MeshStandardMaterial({
-    color: 0x8bc8ff, transparent: true, opacity: 0.09,
-    roughness: 0.1, metalness: 0.04, side: THREE.DoubleSide,
-  });
-  const edgeMat = new THREE.MeshStandardMaterial({ color: 0x3377aa, roughness: 0.5, metalness: 0.4 });
-
   const chamberGroup = new THREE.Group();
   boardGroup.add(chamberGroup);
-
-  // Front & back glass panels
-  [CD, -CD].forEach(z => {
-    const p = new THREE.Mesh(new THREE.PlaneGeometry(CW * 2, CH), glassMat);
-    p.position.set(0, chamberY, z);
-    chamberGroup.add(p);
-  });
-  // Left & right glass panels
-  [-CW, CW].forEach(x => {
-    const p = new THREE.Mesh(new THREE.PlaneGeometry(CD * 2, CH), glassMat);
-    p.rotation.y = Math.PI / 2;
-    p.position.set(x, chamberY, 0);
-    chamberGroup.add(p);
-  });
-  // Vertical edge tubes
-  const tubeGeo = new THREE.CylinderGeometry(0.05, 0.05, CH, 8);
-  [[-CW, CD], [CW, CD], [-CW, -CD], [CW, -CD]].forEach(([x, z]) => {
-    const t = new THREE.Mesh(tubeGeo, edgeMat);
-    t.position.set(x, chamberY, z);
-    chamberGroup.add(t);
-  });
-
   // Funnel visual — angled ramps matching physics geometry
   const HOLE_VIS   = 0.34;
   const funnelH    = Y_FLOOR_VIS - Y_FUNNEL_VIS;  // 2.0m
@@ -367,5 +332,3 @@ export function createPachinkoDrawScene({ canvas, state }) {
     get complete() { return rs.complete; },
   };
 }
-
-

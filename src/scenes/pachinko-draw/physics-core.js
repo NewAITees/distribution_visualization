@@ -15,8 +15,9 @@ const D = 0.75;  // half-depth  Z
 const Y_TOP    =  8.0;
 const Y_FLOOR  = -3.8;   // top of funnel
 const Y_FUNNEL = -5.8;   // bottom of funnel / exit point
-const Y_SENSOR = -6.4;   // sensor: well below funnel exit
+const Y_SENSOR = Y_FUNNEL; // sensor centered on the funnel exit hole
 const HOLE_HALF_X = 0.34; // exit hole half-width at funnel bottom
+const HOLE_HALF_Z = HOLE_HALF_X * 0.8;
 
 // Spinner definitions: [x, y, angVelZ, halfLenX, halfDepthZ]
 // 3 rows; alternating X positions; different speeds/lengths for chaotic paths
@@ -153,12 +154,12 @@ export function createPachinkoDrawWorld(RAPIER, {
     );
   }
 
-  // Sensor — wide enough to catch any ball falling through funnel exit
+  // Sensor — only the center hole should trigger an exit
   const sensorRb = world.createRigidBody(
     RAPIER.RigidBodyDesc.fixed().setTranslation(0, Y_SENSOR, 0),
   );
   const sensorCol = world.createCollider(
-    RAPIER.ColliderDesc.cuboid(HOLE_HALF_X + 0.15, 0.3, D + 0.2)
+    RAPIER.ColliderDesc.cuboid(HOLE_HALF_X - 0.02, 0.22, HOLE_HALF_Z - 0.02)
       .setSensor(true).setActiveEvents(RAPIER.ActiveEvents.COLLISION_EVENTS),
     sensorRb,
   );
@@ -238,14 +239,6 @@ export function createPachinkoDrawWorld(RAPIER, {
       }
     });
 
-    // Position fallback
-    for (const ball of balls) {
-      if (!ball.removed && ball.rb && ball.rb.translation().y < Y_SENSOR - 0.15) {
-        newExits.push(ball);
-        removeBall(ball);
-      }
-    }
-
     return newExits;
   }
 
@@ -260,6 +253,3 @@ export function createPachinkoDrawWorld(RAPIER, {
     SPINNER_DEFS,
   };
 }
-
-
-
