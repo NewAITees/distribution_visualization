@@ -1,9 +1,8 @@
 import { createThreeRuntime, createThreeRenderer } from "../../three/runtime.js";
 import { binomialPmf, normalizeWeights } from "../../core/math.js";
 
-const rapierModule = await import("../../../node_modules/@dimforge/rapier3d-compat/rapier_wasm3d.js");
-await rapierModule.init();
-const RAPIER = rapierModule;
+const rapierInit = (await import('../../../node_modules/@dimforge/rapier3d-compat/rapier_wasm3d.js')).default;
+const RAPIER = await rapierInit();
 
 function rotateVec(q, v) {
   const { x: qx, y: qy, z: qz, w: qw } = q;

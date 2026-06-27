@@ -1,8 +1,7 @@
 import { createPachinkoDrawWorld, BALL_RADIUS } from './physics-core.js';
 
-const rapierModule = await import('../../../node_modules/@dimforge/rapier3d-compat/rapier_wasm3d.js');
-await rapierModule.init();
-const RAPIER = rapierModule;
+const rapierInit = (await import('../../../node_modules/@dimforge/rapier3d-compat/rapier_wasm3d.js')).default;
+const RAPIER = await rapierInit();
 
 export { BALL_RADIUS };
 
