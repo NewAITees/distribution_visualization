@@ -31,6 +31,7 @@ const GALTON_BIAS_P = 0.68;
 
 let lastFrameTime = 0;
 let loopRunning = false;
+let simResultPrinted = false;
 
 function geometricPmf(k, p) {
   return ((1 - p) ** k) * p;
@@ -521,6 +522,8 @@ const els = {
   rareThreshold80: document.getElementById("rare-threshold-80"),
   rareMachines: document.getElementById("rare-machines"),
   rareNote: document.getElementById("rare-note"),
+  simResult: document.getElementById("sim-result"),
+  simResultBody: document.getElementById("sim-result-body"),
 };
 
 const ctx = els.canvas.getContext("2d");
@@ -617,6 +620,14 @@ function buildHistogram(definition, params) {
   state.samples = samples;
   state.bins = histogram;
   state.theoretical = normalizeWeights(definition.theoretical(params, bins), params.samples);
+  simResultPrinted = false;
+  printSimResult();
+}
+
+function resetSimResult() {
+  simResultPrinted = false;
+  els.simResult.hidden = true;
+  els.simResultBody.innerHTML = "";
 }
 
 function setActive(id) {
@@ -625,6 +636,7 @@ function setActive(id) {
   state.params = cloneParams(definition.defaults);
   state.paused = false;
   els.pause.textContent = "一時停止";
+  resetSimResult();
   if (definition.rareAnalysis) {
     state.physics = null;
     state.threeScene = null;
@@ -699,6 +711,7 @@ function renderControls() {
         [spec.key]: value,
       };
       output.textContent = spec.format(value);
+      resetSimResult();
       if (state.active.rareAnalysis) {
         buildRareReport(state.params);
         renderDetails();
@@ -780,6 +793,77 @@ function drawLegend(width, height) {
   ctx.font = "600 12px Trebuchet MS, sans-serif";
   ctx.fillText("3D histogram / particle impact map", 20, height - 18);
   ctx.restore();
+}
+
+function printSimResult() {
+  const bins     = state.bins;
+  const theory   = state.theoretical; // normalizeWeights済み（件数換算）
+  const total    = bins.reduce((s, v) => s + v, 0);
+  if (total === 0 || !bins.length) return;
+
+  els.simResult.hidden = false;
+
+  // ピークビン（実測）
+  const peakIdx = bins.reduce((best, v, i) => (v > bins[best] ? i : best), 0);
+
+  // MAE（平均絶対誤差、件数ベース）
+  let mae = 0;
+  const rows = bins.map((obs, i) => {
+    const exp   = theory[i] ?? 0;
+    const diff  = obs - exp;
+    mae += Math.abs(diff);
+    return { bin: i, obs, exp, diff };
+  });
+  mae /= bins.length;
+
+  // HTML テーブル
+  const thead = `
+    <tr>
+      <th>Bin</th>
+      <th>理論値</th>
+      <th>実測値</th>
+      <th>差（実－理）</th>
+      <th>差 (%)</th>
+    </tr>`;
+
+  const tbody = rows.map(({ bin, obs, exp, diff }) => {
+    const diffPct   = total > 0 ? (diff / total * 100) : 0;
+    const sign      = diff >= 0 ? '+' : '';
+    const cls       = diff > 0.5 ? 'residual-pos' : diff < -0.5 ? 'residual-neg' : '';
+    const peakCls   = bin === peakIdx ? ' peak-row' : '';
+    return `<tr class="${peakCls}">
+      <td>${bin}</td>
+      <td>${exp.toFixed(1)}</td>
+      <td>${obs}</td>
+      <td class="${cls}">${sign}${diff.toFixed(1)}</td>
+      <td class="${cls}">${sign}${diffPct.toFixed(1)}%</td>
+    </tr>`;
+  }).join('');
+
+  els.simResultBody.innerHTML = `
+    <table><thead>${thead}</thead><tbody>${tbody}</tbody></table>
+    <p class="summary">
+      サンプル数: ${total} / ビン数: ${bins.length} / MAE: ${mae.toFixed(2)}件
+    </p>`;
+
+  // コンソールログ
+  const label = state.active.title;
+  console.group(`[SimResult] ${label} (n=${total})`);
+  console.log('%-4s  %8s  %8s  %8s  %8s', 'Bin', '理論値', '実測値', '差', '差(%)');
+  rows.forEach(({ bin, obs, exp, diff }) => {
+    const diffPct = total > 0 ? (diff / total * 100) : 0;
+    const sign    = diff >= 0 ? '+' : '';
+    console.log(
+      `%-4s  %8s  %8s  %8s  %8s`,
+      String(bin),
+      exp.toFixed(1),
+      String(obs),
+      `${sign}${diff.toFixed(1)}`,
+      `${sign}${diffPct.toFixed(1)}%`,
+    );
+  });
+  console.log(`MAE: ${mae.toFixed(2)}件`);
+  console.groupEnd();
 }
 
 function isAnimating() {
@@ -878,12 +962,14 @@ function frame(now) {
     ctx.fillText("paused", width - 86, 34);
     ctx.restore();
   } else if (state.active.physics && state.physics && state.physics.complete) {
+    if (!simResultPrinted) { simResultPrinted = true; printSimResult(); }
     ctx.save();
     ctx.fillStyle = "rgba(107, 220, 255, 0.72)";
     ctx.font = "700 14px Trebuchet MS, sans-serif";
     ctx.fillText("simulation complete", width - 178, 34);
     ctx.restore();
   } else if (state.active.render3d && state.threeScene && state.threeScene.complete) {
+    if (!simResultPrinted) { simResultPrinted = true; printSimResult(); }
     ctx.save();
     ctx.fillStyle = "rgba(107, 220, 255, 0.72)";
     ctx.font = "700 14px Trebuchet MS, sans-serif";
@@ -919,6 +1005,7 @@ setInterval(() => {
 
 els.reroll.addEventListener("click", () => {
   state.rngSeed = (state.rngSeed + 1) >>> 0;
+  resetSimResult();
   if (state.active.rareAnalysis) {
     buildRareReport(state.params);
     renderDetails();

@@ -355,6 +355,63 @@ h1 {
   line-height: 1.5;
 }
 
+.sim-result {
+  margin-top: 8px;
+}
+
+.sim-result-body {
+  font-size: 0.84rem;
+  overflow-x: auto;
+}
+
+.sim-result table {
+  width: 100%;
+  border-collapse: collapse;
+  color: var(--text);
+}
+
+.sim-result th {
+  padding: 6px 8px;
+  text-align: right;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+
+.sim-result th:first-child {
+  text-align: center;
+}
+
+.sim-result td {
+  padding: 5px 8px;
+  text-align: right;
+  border-bottom: 1px solid rgba(175, 198, 255, 0.07);
+  font-variant-numeric: tabular-nums;
+}
+
+.sim-result td:first-child {
+  text-align: center;
+  color: var(--accent-2);
+  font-weight: 700;
+}
+
+.sim-result tr.peak-row td {
+  background: rgba(245, 185, 66, 0.08);
+}
+
+.sim-result .residual-pos { color: #8ef0b4; }
+.sim-result .residual-neg { color: #ff8080; }
+
+.sim-result .summary {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 0.80rem;
+  line-height: 1.7;
+}
+
 .parameter-controls {
   display: grid;
   gap: 12px;
