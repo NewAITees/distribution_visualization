@@ -72,3 +72,14 @@
 Galton board のピン・ボール・ガードレール比率をまとめたメモは
 [`galton-board-physics-notes.md`](/C:/analysis2/distribution_visualization/galton-board-physics-notes.md) に置いてある。
 
+
+## reactor 流用メモ
+
+`sidsenthilexe/reactor` のような中性子連鎖反応シミュレーターを使う場合、Poisson / Exponential / Gamma は同じ本体に計測レイヤーを1枚載せるだけで扱える。
+
+- Poisson: 単位時間内の核分裂回数を数える
+- Exponential: 核分裂イベント間の時間差を測る
+- Gamma: `k` 回目の核分裂までの累積時間を測る
+
+この3つは、核分裂イベントの発生時刻を記録できれば、同じログから後処理で取得できる。
+Lognormal だけは掛け算的な増減を持つ別モデルが必要になる。
