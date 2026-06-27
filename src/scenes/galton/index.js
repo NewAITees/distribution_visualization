@@ -59,11 +59,7 @@ export function createGaltonBoard(deps) {
     board.binTopY = Math.min(pegBottomY + binClearanceY, maxBinTopY);
     board.binBottomY = Math.min(height - 16, board.binTopY + binWallHeight);
 
-    const biasP = definition.biasP ?? 0.5;
-    const gravX = (definition.physicsMode === "biased")
-      ? clamp((biasP - 0.5) * 2, -1, 1)
-      : 0;
-    const world = planck.World({ gravity: planck.Vec2(gravX, 15) });
+    const world = planck.World({ gravity: planck.Vec2(0, 15) });
 
     const pegs = [];
     const balls = [];
@@ -249,13 +245,8 @@ export function createGaltonBoard(deps) {
   function spawnBall() {
     const physics = state.physics;
     if (!physics || physics.spawned >= physics.total) return;
-    const biasP = state.active.biasP ?? 0.5;
-
-    const drift = state.active.physicsMode === "biased"
-      ? clamp((biasP - 0.5) * 0.14, -0.08, 0.08)
-      : 0;
     const jitter = (Math.random() - 0.5) * 1.5;
-    const x = physics.board.centerX + jitter + drift * physics.binWidth * 0.5;
+    const x = physics.board.centerX + jitter;
 
     const ball = physics.world.createBody({
       type: "dynamic",
@@ -270,7 +261,7 @@ export function createGaltonBoard(deps) {
       friction: 0.004,
       restitution: 0.48,
     });
-    ball.setLinearVelocity(planck.Vec2((Math.random() - 0.5) * 0.02 + drift * 0.18, 0.025));
+    ball.setLinearVelocity(planck.Vec2((Math.random() - 0.5) * 0.02, 0.025));
     ball.setUserData({ type: "ball", captured: false, destroySoon: false });
     ball._r_px = physics.board.ballRadius;
     physics.balls.push(ball);

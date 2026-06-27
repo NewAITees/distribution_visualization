@@ -27,8 +27,6 @@ import {
 } from "./src/core/math.js";
 import { drawBackground, roundRect, drawStaticChart, drawHistogramStrip, drawRareProgression } from "./src/core/canvas.js";
 
-const GALTON_BIAS_P = 0.68;
-
 let lastFrameTime = 0;
 let loopRunning = false;
 let simResultPrinted = false;
@@ -75,37 +73,6 @@ const distributionSpecs = {
       return gaussianProfile(bins, mean, sd);
     },
   },
-  binom: {
-    id: "binom",
-    title: "偏り分岐",
-    tag: "biased galton",
-    shape: "非対称",
-    description:
-      "three.js の 3D 空間で偏ったコインを何度も投げ、成功回数を 0〜段数のビンに集計する。コインの反復投げから二項分布を作る。",
-    evaluation: ["適切性: ◎", "見栄え: ○", "わかりやすさ: ◎", "物理演算: ◎"],
-    defaults: { samples: 500, steps: 14 },
-    controls: [
-      { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
-      { key: "steps", label: "段数", min: 8, max: 20, step: 1, format: (v) => `${v}` },
-    ],
-    binsFor(params) {
-      return params.steps + 1;
-    },
-    physics: false,
-    render3d: true,
-    threeKind: "binom",
-    biasP: GALTON_BIAS_P,
-    sample(params, rand) {
-      return binomialSample(params.steps, GALTON_BIAS_P, rand);
-    },
-    theoretical(params, bins) {
-      const weights = [];
-      for (let k = 0; k < bins; k += 1) {
-        weights.push(binomialPmf(params.steps, k, GALTON_BIAS_P));
-      }
-      return weights;
-    },
-  },
   bernoulli: {
     id: "bernoulli",
     title: "ベルヌーイ分布",
@@ -114,10 +81,9 @@ const distributionSpecs = {
     description:
       "1回だけコインを投げ、表か裏かを 0/1 の 2 ビンに集計する。最小単位のコイン分布。",
     evaluation: ["適切性: ◎", "見栄え: ◎", "わかりやすさ: ◎", "3D 表現: ◎"],
-    defaults: { samples: 80, p: 0.5 },
+    defaults: { samples: 80 },
     controls: [
       { key: "samples", label: "投数", min: 10, max: 1000, step: 5, format: (v) => `${v}` },
-      { key: "p", label: "表の確率 p", min: 0.05, max: 0.95, step: 0.05, format: (v) => v.toFixed(2) },
     ],
     binsFor() {
       return 2;
@@ -125,11 +91,11 @@ const distributionSpecs = {
     physics: false,
     render3d: true,
     threeKind: "bernoulli",
-    sample(params, rand) {
-      return rand() < params.p ? 1 : 0;
+    sample() {
+      return Math.random() < 0.5 ? 1 : 0;
     },
     theoretical(params, bins) {
-      return [1 - params.p, params.p].slice(0, bins);
+      return [0.5, 0.5].slice(0, bins);
     },
   },
   binom3d: {
@@ -140,11 +106,10 @@ const distributionSpecs = {
     description:
       "同じコインを n 回投げ、表の回数を 0 から n のビンに集計する。固定回数の反復投げで二項分布を作る。",
     evaluation: ["適切性: ◎", "見栄え: ◎", "わかりやすさ: ◎", "3D 表現: ◎"],
-    defaults: { samples: 500, trials: 14, p: 0.5 },
+    defaults: { samples: 500, trials: 14 },
     controls: [
       { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
       { key: "trials", label: "試行回数 n", min: 2, max: 20, step: 1, format: (v) => `${v}` },
-      { key: "p", label: "表の確率 p", min: 0.05, max: 0.95, step: 0.05, format: (v) => v.toFixed(2) },
     ],
     binsFor(params) {
       return params.trials + 1;
@@ -153,12 +118,12 @@ const distributionSpecs = {
     render3d: true,
     threeKind: "binom",
     sample(params, rand) {
-      return binomialSample(params.trials, params.p, rand);
+      return binomialSample(params.trials, 0.5, rand);
     },
     theoretical(params, bins) {
       const weights = [];
       for (let k = 0; k < bins; k += 1) {
-        weights.push(binomialPmf(params.trials, k, params.p));
+        weights.push(binomialPmf(params.trials, k, 0.5));
       }
       return weights;
     },
@@ -171,11 +136,10 @@ const distributionSpecs = {
     description:
       "表が最初に出るまでコインを投げ続け、その失敗回数を集計する。試行の長さ自体が分布になる。",
     evaluation: ["適切性: ◎", "見栄え: ◎", "わかりやすさ: ◎", "3D 表現: ◎"],
-    defaults: { samples: 400, maxTries: 12, p: 0.5 },
+    defaults: { samples: 400, maxTries: 12 },
     controls: [
       { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
       { key: "maxTries", label: "最大試行回数", min: 3, max: 20, step: 1, format: (v) => `${v}` },
-      { key: "p", label: "表の確率 p", min: 0.05, max: 0.95, step: 0.05, format: (v) => v.toFixed(2) },
     ],
     binsFor(params) {
       return params.maxTries + 1;
@@ -186,7 +150,7 @@ const distributionSpecs = {
     sample(params, rand) {
       let failures = 0;
       while (failures < params.maxTries) {
-        if (rand() < params.p) return failures;
+        if (rand() < 0.5) return failures;
         failures += 1;
       }
       return params.maxTries;
@@ -194,9 +158,9 @@ const distributionSpecs = {
     theoretical(params, bins) {
       const weights = [];
       for (let k = 0; k < bins - 1; k += 1) {
-        weights.push(geometricPmf(k, params.p));
+        weights.push(geometricPmf(k, 0.5));
       }
-      weights.push((1 - params.p) ** params.maxTries);
+      weights.push(0.5 ** params.maxTries);
       return weights;
     },
   },
@@ -208,12 +172,11 @@ const distributionSpecs = {
     description:
       "r 回表が出るまでコインを投げ、その途中で出た裏の回数を集計する。成功回数を固定した待ち時間の分布。",
     evaluation: ["適切性: ◎", "見栄え: ◎", "わかりやすさ: ◎", "3D 表現: ◎"],
-    defaults: { samples: 400, successesNeeded: 4, maxFailures: 24, p: 0.5 },
+    defaults: { samples: 400, successesNeeded: 4, maxFailures: 24 },
     controls: [
       { key: "samples", label: "サンプル数", min: 20, max: 1000, step: 5, format: (v) => `${v}` },
       { key: "successesNeeded", label: "必要な成功数 r", min: 1, max: 8, step: 1, format: (v) => `${v}` },
       { key: "maxFailures", label: "最大失敗回数", min: 6, max: 40, step: 1, format: (v) => `${v}` },
-      { key: "p", label: "表の確率 p", min: 0.05, max: 0.95, step: 0.05, format: (v) => v.toFixed(2) },
     ],
     binsFor(params) {
       return params.maxFailures + 1;
@@ -225,7 +188,7 @@ const distributionSpecs = {
       let successes = 0;
       let failures = 0;
       while (failures < params.maxFailures) {
-        if (rand() < params.p) {
+        if (rand() < 0.5) {
           successes += 1;
           if (successes >= params.successesNeeded) return failures;
         } else {
@@ -237,7 +200,7 @@ const distributionSpecs = {
     theoretical(params, bins) {
       const weights = [];
       for (let k = 0; k < bins - 1; k += 1) {
-        weights.push(negativeBinomialPmf(k, params.successesNeeded, params.p));
+        weights.push(negativeBinomialPmf(k, params.successesNeeded, 0.5));
       }
       const tail = Math.max(0, 1 - weights.reduce((sum, value) => sum + value, 0));
       weights.push(tail);
